@@ -158,3 +158,26 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if self.dragging:
             for band in self.drag_bands:
                 band.movePoint(1, e.mapPoint())
+
+
+    def keyPressEvent(self, e):
+
+        if not self.dragging:
+            return
+
+        if e.key() == Qt.Key_Delete:
+
+            e.ignore()  # Override default shortcut management
+
+            drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
+            self.dragging = False
+            self.clear_drag_bands()
+
+            geom = QgsGeometry(drag_f.geometry())
+            if not geom.deleteVertex(drag_vertex_id):
+                print "delete vertex failed!"
+                return
+            drag_layer.beginEditCommand( self.tr( "Deleted vertex" ) )
+            drag_layer.changeGeometry(drag_fid, geom)
+            drag_layer.endEditCommand()
+            drag_layer.triggerRepaint()
