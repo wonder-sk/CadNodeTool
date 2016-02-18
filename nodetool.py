@@ -77,10 +77,15 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not self.can_use_current_layer():
             return
 
-        if self.dragging:
-            self.move_vertex(e)
-        else:
-            self.start_dragging(e)
+        if e.button() == Qt.LeftButton:
+            # accepting action
+            if self.dragging:
+                self.move_vertex(e)
+            else:
+                self.start_dragging(e)
+        elif e.button() == Qt.RightButton:
+            # cancelling action
+            self.cancel_vertex()
 
     def cadCanvasReleaseEvent(self, e):
         pass
@@ -166,12 +171,15 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 self.add_drag_band(v1, other_m.point())
 
 
+    def cancel_vertex(self):
+        self.dragging = False
+        self.clear_drag_bands()
+
 
     def move_vertex(self, e):
 
         drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
-        self.dragging = False
-        self.clear_drag_bands()
+        self.cancel_vertex()
 
         # move vertex
         geom = QgsGeometry(drag_f.geometry())
@@ -199,8 +207,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
     def delete_vertex(self):
 
         drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
-        self.dragging = False
-        self.clear_drag_bands()
+        self.cancel_vertex()
 
         geom = QgsGeometry(drag_f.geometry())
         if not geom.deleteVertex(drag_vertex_id):
