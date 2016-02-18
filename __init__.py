@@ -69,10 +69,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.snap_marker.setPenWidth(3)
         self.snap_marker.setVisible(False)
 
-        self.drag_band = QgsRubberBand(canvas)
-        self.drag_band.setColor(Qt.blue)
-        self.drag_band.setWidth(3)
-        self.drag_band.setVisible(False)
+        self.drag_bands = []
 
         self.dragging = None
 
@@ -92,8 +89,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         return True
 
+    def add_drag_band(self, v1, v2):
+        drag_band = QgsRubberBand(self.canvas())
+        drag_band.setColor(Qt.blue)
+        drag_band.setWidth(3)
+        drag_band.addPoint(v1)
+        drag_band.addPoint(v2)
+        self.drag_bands.append(drag_band)
+
+    def clear_drag_bands(self):
+        for band in self.drag_bands:
+            self.canvas().scene().removeItem(band)
+        self.drag_bands = []
+
     def cadCanvasPressEvent(self, e):
-        print "Press!", e
 
         if not self.can_use_current_layer():
             return
@@ -104,7 +113,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             # stop dragging
             drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
             self.dragging = False
-            self.drag_band.setVisible(False)
+            self.clear_drag_bands()
 
             # move vertex
             geom = QgsGeometry(drag_f.geometry())
@@ -117,6 +126,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             layer.triggerRepaint()
             return
 
+        # TODO: exclude other layers
         m = self.canvas().snappingUtils().snapToMap(e.mapPoint())
         if not m.hasVertex() or m.layer() != layer:
             print "wrong snap!"
@@ -127,18 +137,17 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         # start dragging of snapped point of current layer
         self.dragging = (m.layer(), m.featureId(), m.vertexIndex(), f)
 
-        # TODO: what if no left/right point
+        # TODO: handle rings
         v0 = f.geometry().vertexAt(m.vertexIndex()-1)
         v1 = f.geometry().vertexAt(m.vertexIndex()+1)
 
-        self.drag_band.reset()
-        self.drag_band.addPoint(v0)
-        self.drag_band.addPoint(m.point())
-        self.drag_band.addPoint(v1)
-        self.drag_band.setVisible(True)
+        if v0.x() != 0 or v0.y() != 0:
+            self.add_drag_band(v0, m.point())
+        if v1.x() != 0 or v1.y() != 0:
+            self.add_drag_band(v1, m.point())
 
     def cadCanvasReleaseEvent(self, e):
-        print "Release!", e
+        pass
 
     def cadCanvasMoveEvent(self, e):
         QgsMapToolAdvancedDigitizing.cadCanvasMoveEvent(self, e)
@@ -146,7 +155,6 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.snap_marker.setCenter(e.mapPoint())
         self.snap_marker.setVisible(e.isSnapped())
 
-        print "Move!", e, e.isSnapped()
-
         if self.dragging:
-            self.drag_band.movePoint(1, e.mapPoint())
+            for band in self.drag_bands:
+                band.movePoint(1, e.mapPoint())
