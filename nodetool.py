@@ -100,6 +100,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             for band in self.drag_bands:
                 band.movePoint(1, e.mapPoint())
 
+    def canvasDoubleClickEvent(self, e):
+
+        if e.button() == Qt.LeftButton and not self.dragging:
+            self.start_dragging_add_vertex(e)
+
     def keyPressEvent(self, e):
 
         if not self.dragging:
@@ -124,7 +129,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         # start dragging of snapped point of current layer
         self.dragging = (m.layer(), m.featureId(), m.vertexIndex(), f)
 
-        # TODO: handle rings
+        # TODO: handle rings (QgsGeometry::adjacentVertices)
         v0 = f.geometry().vertexAt(m.vertexIndex()-1)
         v1 = f.geometry().vertexAt(m.vertexIndex()+1)
 
@@ -171,6 +176,26 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 self.add_drag_band(v1, other_m.point())
 
 
+    def start_dragging_add_vertex(self, e):
+
+        m = self.canvas().snappingUtils().snapToMap(e.mapPoint())
+        if not m.hasEdge() or m.layer() != self.canvas().currentLayer():
+            print "wrong snap!"
+            return
+
+        f = m.layer().getFeatures(QgsFeatureRequest(m.featureId())).next()
+
+        self.dragging = (m.layer(), m.featureId(), (m.vertexIndex()+1,), f)
+
+        v0 = f.geometry().vertexAt(m.vertexIndex())
+        v1 = f.geometry().vertexAt(m.vertexIndex()+1)
+
+        if v0.x() != 0 or v0.y() != 0:
+            self.add_drag_band(v0, m.point())
+        if v1.x() != 0 or v1.y() != 0:
+            self.add_drag_band(v1, m.point())
+
+
     def cancel_vertex(self):
         self.dragging = False
         self.clear_drag_bands()
@@ -181,11 +206,21 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
         self.cancel_vertex()
 
-        # move vertex
+        adding_vertex = False
+        if isinstance(drag_vertex_id, tuple):
+            adding_vertex = True
+            drag_vertex_id = drag_vertex_id[0]
+
+        # add/move vertex
         geom = QgsGeometry(drag_f.geometry())
-        if not geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
-            print "move vertex failed!"
-            return
+        if adding_vertex:
+            if not geom.insertVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
+                print "insert vertex failed!"
+                return
+        else:
+            if not geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
+                print "move vertex failed!"
+                return
 
         topo_edits = [] # tuples fid, geom
         for topo in self.dragging_topo:
