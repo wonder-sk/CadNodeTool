@@ -28,8 +28,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.snap_marker.setVisible(False)
 
         self.drag_bands = []
-
         self.dragging = None
+        self.dragging_topo = []
 
     def can_use_current_layer(self):
         layer = self.canvas().currentLayer()
@@ -48,7 +48,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         return True
 
     def topo_editing(self):
-        return QgsProject.instance().readNumEntry("Digitizing", "/TopologicalEditing", 0)
+        return QgsProject.instance().readNumEntry("Digitizing", "/TopologicalEditing", 0)[0]
 
     def add_drag_band(self, v1, v2):
         drag_band = QgsRubberBand(self.canvas())
@@ -128,6 +128,45 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if v1.x() != 0 or v1.y() != 0:
             self.add_drag_band(v1, m.point())
 
+        if not self.topo_editing():
+            return  # we are done now
+
+        class MyFilter(QgsPointLocator.MatchFilter):
+            """ a filter just to gather all matches """
+            def __init__(self):
+                QgsPointLocator.MatchFilter.__init__(self)
+                self.matches = []
+            def acceptMatch(self, match):
+                self.matches.append(match)
+                return True
+
+        self.dragging_topo = []
+
+        # TODO: use all relevant layers!
+
+        # support for topo editing - find extra features
+        myfilter = MyFilter()
+        loc = self.canvas().snappingUtils().locatorForLayer(m.layer())
+        loc.nearestVertex(e.mapPoint(), 0, myfilter)
+        for other_m in myfilter.matches:
+            if other_m == m: continue
+
+            other_f = other_m.layer().getFeatures(QgsFeatureRequest(other_m.featureId())).next()
+
+            # start dragging of snapped point of current layer
+            self.dragging_topo.append( (other_m.layer(), other_m.featureId(), other_m.vertexIndex(), other_f) )
+
+            # TODO: handle rings
+            v0 = other_f.geometry().vertexAt(other_m.vertexIndex()-1)
+            v1 = other_f.geometry().vertexAt(other_m.vertexIndex()+1)
+
+            if v0.x() != 0 or v0.y() != 0:
+                self.add_drag_band(v0, other_m.point())
+            if v1.x() != 0 or v1.y() != 0:
+                self.add_drag_band(v1, other_m.point())
+
+
+
     def move_vertex(self, e):
 
         drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
@@ -139,8 +178,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
             print "move vertex failed!"
             return
+
+        topo_edits = [] # tuples fid, geom
+        for topo in self.dragging_topo:
+            topo_layer, topo_fid, topo_vertex_id, topo_f = topo
+            topo_geom = QgsGeometry(topo_f.geometry())
+            if not topo_geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), topo_vertex_id):
+                print "[topo] move vertex failed!"
+                continue
+            topo_edits.append( (topo_fid, topo_geom) )
+
         drag_layer.beginEditCommand( self.tr( "Moved vertex" ) )
         drag_layer.changeGeometry(drag_fid, geom)
+        for fid, g in topo_edits:
+            drag_layer.changeGeometry(fid, g)   # TODO: if other layer
         drag_layer.endEditCommand()
         drag_layer.triggerRepaint()
 
