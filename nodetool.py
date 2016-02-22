@@ -128,34 +128,33 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # start dragging of snapped point of current layer
         self.dragging = (m.layer(), m.featureId(), m.vertexIndex(), f)
+        self.dragging_topo = []
 
-        # TODO: handle rings (QgsGeometry::adjacentVertices)
-        v0 = f.geometry().vertexAt(m.vertexIndex()-1)
-        v1 = f.geometry().vertexAt(m.vertexIndex()+1)
-
-        if v0.x() != 0 or v0.y() != 0:
-            self.add_drag_band(v0, m.point())
-        if v1.x() != 0 or v1.y() != 0:
-            self.add_drag_band(v1, m.point())
+        v0idx, v1idx = f.geometry().adjacentVertices(m.vertexIndex())
+        if v0idx != -1:
+            self.add_drag_band(f.geometry().vertexAt(v0idx), m.point())
+        if v1idx != -1:
+            self.add_drag_band(f.geometry().vertexAt(v1idx), m.point())
 
         if not self.topo_editing():
             return  # we are done now
 
         class MyFilter(QgsPointLocator.MatchFilter):
-            """ a filter just to gather all matches """
-            def __init__(self):
+            """ a filter just to gather all matches within tolerance """
+            def __init__(self, tolerance=None):
                 QgsPointLocator.MatchFilter.__init__(self)
                 self.matches = []
+                self.tolerance = tolerance
             def acceptMatch(self, match):
+                if self.tolerance is not None and match.distance() > self.tolerance:
+                    return False
                 self.matches.append(match)
                 return True
-
-        self.dragging_topo = []
 
         # TODO: use all relevant layers!
 
         # support for topo editing - find extra features
-        myfilter = MyFilter()
+        myfilter = MyFilter(0)
         loc = self.canvas().snappingUtils().locatorForLayer(m.layer())
         loc.nearestVertex(e.mapPoint(), 0, myfilter)
         for other_m in myfilter.matches:
@@ -166,14 +165,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             # start dragging of snapped point of current layer
             self.dragging_topo.append( (other_m.layer(), other_m.featureId(), other_m.vertexIndex(), other_f) )
 
-            # TODO: handle rings
-            v0 = other_f.geometry().vertexAt(other_m.vertexIndex()-1)
-            v1 = other_f.geometry().vertexAt(other_m.vertexIndex()+1)
-
-            if v0.x() != 0 or v0.y() != 0:
-                self.add_drag_band(v0, other_m.point())
-            if v1.x() != 0 or v1.y() != 0:
-                self.add_drag_band(v1, other_m.point())
+            v0idx, v1idx = other_f.geometry().adjacentVertices(other_m.vertexIndex())
+            if v0idx != -1:
+                self.add_drag_band(other_f.geometry().vertexAt(v0idx), other_m.point())
+            if v1idx != -1:
+                self.add_drag_band(other_f.geometry().vertexAt(v1idx), other_m.point())
 
 
     def start_dragging_add_vertex(self, e):
@@ -186,7 +182,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         f = m.layer().getFeatures(QgsFeatureRequest(m.featureId())).next()
 
         self.dragging = (m.layer(), m.featureId(), (m.vertexIndex()+1,), f)
+        self.dragging_topo = []
 
+        # TODO: handles rings correctly?
         v0 = f.geometry().vertexAt(m.vertexIndex())
         v1 = f.geometry().vertexAt(m.vertexIndex()+1)
 
