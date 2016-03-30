@@ -48,12 +48,12 @@ class CadNodeToolPlugin:
         self.iface.mapCanvas().setMapTool(self.tool)
 
     def onCurrentLayerChanged(self):
-        if self.current_layer:
+        if isinstance(self.current_layer, QgsVectorLayer):
             self.current_layer.editingStarted.disconnect(self.onEditingStartStop)
             self.current_layer.editingStopped.disconnect(self.onEditingStartStop)
         self.action.setEnabled(self.tool.can_use_current_layer())
         self.current_layer = self.iface.mapCanvas().currentLayer()
-        if self.current_layer:
+        if isinstance(self.current_layer, QgsVectorLayer):
             self.current_layer.editingStarted.connect(self.onEditingStartStop)
             self.current_layer.editingStopped.connect(self.onEditingStartStop)
 
