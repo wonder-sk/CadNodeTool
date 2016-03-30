@@ -27,6 +27,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.snap_marker.setPenWidth(3)
         self.snap_marker.setVisible(False)
 
+        self.edge_center_marker = QgsVertexMarker(canvas)
+        self.edge_center_marker.setIconType(QgsVertexMarker.ICON_BOX)
+        self.edge_center_marker.setColor(Qt.red)
+        self.edge_center_marker.setPenWidth(1)
+        self.edge_center_marker.setVisible(False)
+
         self.drag_bands = []
         self.dragging = None
         self.dragging_topo = []
@@ -93,17 +99,25 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
     def cadCanvasMoveEvent(self, e):
         QgsMapToolAdvancedDigitizing.cadCanvasMoveEvent(self, e)
 
-        self.snap_marker.setCenter(e.mapPoint())
-        self.snap_marker.setVisible(e.isSnapped())
+        if (not self.dragging and e.mapPointMatch().type() == QgsPointLocator.Vertex) or \
+           (self.dragging and e.isSnapped()):
+            self.snap_marker.setCenter(e.mapPoint())
+            self.snap_marker.setVisible(True)
+        else:
+            self.snap_marker.setVisible(False)
+
+        # possibility to create new node here
+        if not self.dragging and e.mapPointMatch().type() == QgsPointLocator.Edge:
+            p0, p1 = e.mapPointMatch().edgePoints()
+            edge_center = QgsPoint((p0.x() + p1.x())/2, (p0.y() + p1.y())/2)
+            self.edge_center_marker.setCenter(edge_center)
+            self.edge_center_marker.setVisible(True)
+        else:
+            self.edge_center_marker.setVisible(False)
 
         if self.dragging:
             for band in self.drag_bands:
                 band.movePoint(1, e.mapPoint())
-
-    def canvasDoubleClickEvent(self, e):
-
-        if e.button() == Qt.LeftButton and not self.dragging:
-            self.start_dragging_add_vertex(e)
 
     def keyPressEvent(self, e):
 
@@ -120,9 +134,16 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # TODO: exclude other layers
         m = self.canvas().snappingUtils().snapToMap(e.mapPoint())
-        if not m.hasVertex() or m.layer() != self.canvas().currentLayer():
+        if not m.isValid() or m.layer() != self.canvas().currentLayer():
             print "wrong snap!"
             return
+
+        # adding a new vertex instead of moving a vertex
+        if m.hasEdge():
+            self.start_dragging_add_vertex(e)
+            return
+
+        assert m.hasVertex()
 
         f = m.layer().getFeatures(QgsFeatureRequest(m.featureId())).next()
 
