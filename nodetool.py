@@ -36,6 +36,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.drag_bands = []
         self.dragging = None
         self.dragging_topo = []
+        self.selected_nodes = []  # list of (layer, fid, vid, f)
+        self.selected_nodes_markers = []  # list of vertex markers
+
+
+    def deactivate(self):
+        self.set_highlighted_nodes([])
+
 
     def can_use_current_layer(self):
         layer = self.canvas().currentLayer()
@@ -83,6 +90,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not self.can_use_current_layer():
             return
 
+        self.set_highlighted_nodes([])   # reset selection
+
         if e.button() == Qt.LeftButton:
             # accepting action
             if self.dragging:
@@ -120,7 +129,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def keyPressEvent(self, e):
 
-        if not self.dragging:
+        if not self.dragging and len(self.selected_nodes) == 0:
             return
 
         if e.key() == Qt.Key_Delete:
@@ -266,14 +275,50 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def delete_vertex(self):
 
-        drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
-        self.cancel_vertex()
+        if len(self.selected_nodes) != 0:
+            to_delete = self.selected_nodes
+        else:
+            to_delete = [self.dragging]
+            self.cancel_vertex()
 
-        geom = QgsGeometry(drag_f.geometry())
-        if not geom.deleteVertex(drag_vertex_id):
-            print "delete vertex failed!"
-            return
-        drag_layer.beginEditCommand( self.tr( "Deleted vertex" ) )
-        drag_layer.changeGeometry(drag_fid, geom)
-        drag_layer.endEditCommand()
-        drag_layer.triggerRepaint()
+        self.set_highlighted_nodes([])   # reset selection
+
+        for drag_layer, drag_fid, drag_vertex_id, drag_f in to_delete:
+
+            geom = QgsGeometry(drag_f.geometry())
+            if not geom.deleteVertex(drag_vertex_id):
+                print "delete vertex failed!"
+                return
+            drag_layer.beginEditCommand( self.tr( "Deleted vertex" ) )
+            drag_layer.changeGeometry(drag_fid, geom)
+            drag_layer.endEditCommand()
+            drag_layer.triggerRepaint()
+
+            if len(to_delete) == 1:
+                # pre-select next node for deletion if we are deleting just one node
+
+                # if next vertex is not available, use the previous one
+                if geom.vertexAt(drag_vertex_id) == QgsPoint():
+                    drag_vertex_id -= 1
+
+                if geom.vertexAt(drag_vertex_id) != QgsPoint():
+                    drag_f2 = QgsFeature(drag_f)
+                    drag_f2.setGeometry(geom)
+                    self.set_highlighted_nodes([(drag_layer, drag_fid, drag_vertex_id, drag_f2)])
+
+
+    def set_highlighted_nodes(self, list_nodes):
+        for marker in self.selected_nodes_markers:
+            self.canvas().scene().removeItem(marker)
+        self.selected_nodes_markers = []
+
+        for node in list_nodes:
+            node_f = node[3]
+            marker = QgsVertexMarker(self.canvas())
+            marker.setIconType(QgsVertexMarker.ICON_CIRCLE)
+            #marker.setIconSize(5)
+            #marker.setPenWidth(2)
+            marker.setColor(Qt.blue)
+            marker.setCenter(node_f.geometry().vertexAt(node[2]))
+            self.selected_nodes_markers.append(marker)
+        self.selected_nodes = list_nodes
