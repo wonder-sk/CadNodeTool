@@ -97,7 +97,6 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         pass
 
     def cadCanvasMoveEvent(self, e):
-        QgsMapToolAdvancedDigitizing.cadCanvasMoveEvent(self, e)
 
         if (not self.dragging and e.mapPointMatch().type() == QgsPointLocator.Vertex) or \
            (self.dragging and e.isSnapped()):
@@ -137,6 +136,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not m.isValid() or m.layer() != self.canvas().currentLayer():
             print "wrong snap!"
             return
+
+        self.setMode(self.CaptureLine)
 
         # adding a new vertex instead of moving a vertex
         if m.hasEdge():
@@ -216,11 +217,16 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
 
     def cancel_vertex(self):
+
+        self.setMode(self.CaptureNone)
+
         self.dragging = False
         self.clear_drag_bands()
 
 
     def move_vertex(self, e):
+
+        self.setMode(self.CaptureNone)
 
         drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
         self.cancel_vertex()
