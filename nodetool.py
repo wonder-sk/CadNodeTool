@@ -149,7 +149,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     # ------------
 
-    def cached_feature(self, layer, fid):
+    def cached_geometry(self, layer, fid):
         if layer not in self.cache:
             self.cache[layer] = {}
             layer.geometryChanged.connect(self.on_cached_geometry_changed)
@@ -157,19 +157,19 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         if fid not in self.cache[layer]:
             f = layer.getFeatures(QgsFeatureRequest(fid)).next()
-            self.cache[layer][fid] = f
+            self.cache[layer][fid] = QgsGeometry(f.geometry())
 
         return self.cache[layer][fid]
 
-    def cached_feature_for_vertex(self, vertex):
-        return self.cached_feature(vertex.layer, vertex.fid)
+    def cached_geometry_for_vertex(self, vertex):
+        return self.cached_geometry(vertex.layer, vertex.fid)
 
     def on_cached_geometry_changed(self, fid, geom):
         """ update geometry of our feature """
         layer = self.sender()
         assert layer in self.cache
         if fid in self.cache[layer]:
-            self.cache[layer][fid].setGeometry(geom)
+            self.cache[layer][fid] = QgsGeometry(geom)
 
     def on_cached_geometry_deleted(self, fid):
         layer = self.sender()
@@ -194,17 +194,17 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert m.hasVertex()
 
-        f = self.cached_feature(m.layer(), m.featureId())
+        geom = self.cached_geometry(m.layer(), m.featureId())
 
         # start dragging of snapped point of current layer
         self.dragging = Vertex(m.layer(), m.featureId(), m.vertexIndex())
         self.dragging_topo = []
 
-        v0idx, v1idx = f.geometry().adjacentVertices(m.vertexIndex())
+        v0idx, v1idx = geom.adjacentVertices(m.vertexIndex())
         if v0idx != -1:
-            self.add_drag_band(f.geometry().vertexAt(v0idx), m.point())
+            self.add_drag_band(geom.vertexAt(v0idx), m.point())
         if v1idx != -1:
-            self.add_drag_band(f.geometry().vertexAt(v1idx), m.point())
+            self.add_drag_band(geom.vertexAt(v1idx), m.point())
 
         if not self.topo_editing():
             return  # we are done now
@@ -230,16 +230,16 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for other_m in myfilter.matches:
             if other_m == m: continue
 
-            other_f = self.cached_feature(other_m.layer(), other_m.featureId())
+            other_g = self.cached_geometry(other_m.layer(), other_m.featureId())
 
             # start dragging of snapped point of current layer
             self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
 
-            v0idx, v1idx = other_f.geometry().adjacentVertices(other_m.vertexIndex())
+            v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
             if v0idx != -1:
-                self.add_drag_band(other_f.geometry().vertexAt(v0idx), other_m.point())
+                self.add_drag_band(other_g.vertexAt(v0idx), other_m.point())
             if v1idx != -1:
-                self.add_drag_band(other_f.geometry().vertexAt(v1idx), other_m.point())
+                self.add_drag_band(other_g.vertexAt(v1idx), other_m.point())
 
 
     def start_dragging_add_vertex(self, e):
@@ -252,11 +252,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1,))
         self.dragging_topo = []
 
-        f = self.cached_feature(m.layer(), m.featureId())
+        geom = self.cached_geometry(m.layer(), m.featureId())
 
         # TODO: handles rings correctly?
-        v0 = f.geometry().vertexAt(m.vertexIndex())
-        v1 = f.geometry().vertexAt(m.vertexIndex()+1)
+        v0 = geom.vertexAt(m.vertexIndex())
+        v1 = geom.vertexAt(m.vertexIndex()+1)
 
         if v0.x() != 0 or v0.y() != 0:
             self.add_drag_band(v0, m.point())
@@ -279,7 +279,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         drag_layer = self.dragging.layer
         drag_fid = self.dragging.fid
         drag_vertex_id = self.dragging.vertex_id
-        drag_f = self.cached_feature_for_vertex(self.dragging)
+        geom = QgsGeometry(self.cached_geometry_for_vertex(self.dragging))
         self.cancel_vertex()
 
         adding_vertex = False
@@ -288,7 +288,6 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             drag_vertex_id = drag_vertex_id[0]
 
         # add/move vertex
-        geom = QgsGeometry(drag_f.geometry())
         if adding_vertex:
             if not geom.insertVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
                 print "insert vertex failed!"
@@ -327,9 +326,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         for vertex in to_delete:
 
-            f = self.cached_feature_for_vertex(vertex)
+            geom = QgsGeometry(self.cached_geometry_for_vertex(vertex))
             vertex_id = vertex.vertex_id
-            geom = QgsGeometry(f.geometry())
             if not geom.deleteVertex(vertex_id):
                 print "delete vertex failed!"
                 return
@@ -355,12 +353,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.selected_nodes_markers = []
 
         for node in list_nodes:
-            node_f = self.cached_feature_for_vertex(node)
+            geom = self.cached_geometry_for_vertex(node)
             marker = QgsVertexMarker(self.canvas())
             marker.setIconType(QgsVertexMarker.ICON_CIRCLE)
             #marker.setIconSize(5)
             #marker.setPenWidth(2)
             marker.setColor(Qt.blue)
-            marker.setCenter(node_f.geometry().vertexAt(node.vertex_id))
+            marker.setCenter(geom.vertexAt(node.vertex_id))
             self.selected_nodes_markers.append(marker)
         self.selected_nodes = list_nodes
