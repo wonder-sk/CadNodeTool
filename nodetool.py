@@ -15,6 +15,15 @@ from PyQt4.QtCore import *
 from qgis.core import *
 from qgis.gui import *
 
+class Vertex(object):
+    def __init__(self, layer, fid, vertex_id):
+        self.layer = layer
+        self.fid = fid
+        self.vertex_id = vertex_id
+
+class LayerCache(object):
+    """ keeps track of features of a layer that are of our interest """
+    pass
 
 
 class NodeTool(QgsMapToolAdvancedDigitizing):
@@ -38,6 +47,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.dragging_topo = []
         self.selected_nodes = []  # list of (layer, fid, vid, f)
         self.selected_nodes_markers = []  # list of vertex markers
+
+        self.cache = {}
 
 
     def deactivate(self):
@@ -138,6 +149,34 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     # ------------
 
+    def cached_feature(self, layer, fid):
+        if layer not in self.cache:
+            self.cache[layer] = {}
+            layer.geometryChanged.connect(self.on_cached_geometry_changed)
+            layer.featureDeleted.connect(self.on_cached_geometry_deleted)
+
+        if fid not in self.cache[layer]:
+            f = layer.getFeatures(QgsFeatureRequest(fid)).next()
+            self.cache[layer][fid] = f
+
+        return self.cache[layer][fid]
+
+    def cached_feature_for_vertex(self, vertex):
+        return self.cached_feature(vertex.layer, vertex.fid)
+
+    def on_cached_geometry_changed(self, fid, geom):
+        """ update geometry of our feature """
+        layer = self.sender()
+        assert layer in self.cache
+        if fid in self.cache[layer]:
+            self.cache[layer][fid].setGeometry(geom)
+
+    def on_cached_geometry_deleted(self, fid):
+        layer = self.sender()
+        assert layer in self.cache
+        if fid in self.cache[layer]:
+            del self.cache[layer][fid]
+
     def start_dragging(self, e):
 
         # TODO: exclude other layers
@@ -155,10 +194,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert m.hasVertex()
 
-        f = m.layer().getFeatures(QgsFeatureRequest(m.featureId())).next()
+        f = self.cached_feature(m.layer(), m.featureId())
 
         # start dragging of snapped point of current layer
-        self.dragging = (m.layer(), m.featureId(), m.vertexIndex(), f)
+        self.dragging = Vertex(m.layer(), m.featureId(), m.vertexIndex())
         self.dragging_topo = []
 
         v0idx, v1idx = f.geometry().adjacentVertices(m.vertexIndex())
@@ -191,10 +230,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for other_m in myfilter.matches:
             if other_m == m: continue
 
-            other_f = other_m.layer().getFeatures(QgsFeatureRequest(other_m.featureId())).next()
+            other_f = self.cached_feature(other_m.layer(), other_m.featureId())
 
             # start dragging of snapped point of current layer
-            self.dragging_topo.append( (other_m.layer(), other_m.featureId(), other_m.vertexIndex(), other_f) )
+            self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
 
             v0idx, v1idx = other_f.geometry().adjacentVertices(other_m.vertexIndex())
             if v0idx != -1:
@@ -210,10 +249,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             print "wrong snap!"
             return
 
-        f = m.layer().getFeatures(QgsFeatureRequest(m.featureId())).next()
-
-        self.dragging = (m.layer(), m.featureId(), (m.vertexIndex()+1,), f)
+        self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1,))
         self.dragging_topo = []
+
+        f = self.cached_feature(m.layer(), m.featureId())
 
         # TODO: handles rings correctly?
         v0 = f.geometry().vertexAt(m.vertexIndex())
@@ -237,7 +276,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.setMode(self.CaptureNone)
 
-        drag_layer, drag_fid, drag_vertex_id, drag_f = self.dragging
+        drag_layer = self.dragging.layer
+        drag_fid = self.dragging.fid
+        drag_vertex_id = self.dragging.vertex_id
+        drag_f = self.cached_feature_for_vertex(self.dragging)
         self.cancel_vertex()
 
         adding_vertex = False
@@ -283,28 +325,28 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.set_highlighted_nodes([])   # reset selection
 
-        for drag_layer, drag_fid, drag_vertex_id, drag_f in to_delete:
+        for vertex in to_delete:
 
-            geom = QgsGeometry(drag_f.geometry())
-            if not geom.deleteVertex(drag_vertex_id):
+            f = self.cached_feature_for_vertex(vertex)
+            vertex_id = vertex.vertex_id
+            geom = QgsGeometry(f.geometry())
+            if not geom.deleteVertex(vertex_id):
                 print "delete vertex failed!"
                 return
-            drag_layer.beginEditCommand( self.tr( "Deleted vertex" ) )
-            drag_layer.changeGeometry(drag_fid, geom)
-            drag_layer.endEditCommand()
-            drag_layer.triggerRepaint()
+            vertex.layer.beginEditCommand( self.tr( "Deleted vertex" ) )
+            vertex.layer.changeGeometry(vertex.fid, geom)
+            vertex.layer.endEditCommand()
+            vertex.layer.triggerRepaint()
 
             if len(to_delete) == 1:
                 # pre-select next node for deletion if we are deleting just one node
 
                 # if next vertex is not available, use the previous one
-                if geom.vertexAt(drag_vertex_id) == QgsPoint():
-                    drag_vertex_id -= 1
+                if geom.vertexAt(vertex_id) == QgsPoint():
+                    vertex_id -= 1
 
-                if geom.vertexAt(drag_vertex_id) != QgsPoint():
-                    drag_f2 = QgsFeature(drag_f)
-                    drag_f2.setGeometry(geom)
-                    self.set_highlighted_nodes([(drag_layer, drag_fid, drag_vertex_id, drag_f2)])
+                if geom.vertexAt(vertex_id) != QgsPoint():
+                    self.set_highlighted_nodes([Vertex(vertex.layer, vertex.fid, vertex_id)])
 
 
     def set_highlighted_nodes(self, list_nodes):
@@ -313,12 +355,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.selected_nodes_markers = []
 
         for node in list_nodes:
-            node_f = node[3]
+            node_f = self.cached_feature_for_vertex(node)
             marker = QgsVertexMarker(self.canvas())
             marker.setIconType(QgsVertexMarker.ICON_CIRCLE)
             #marker.setIconSize(5)
             #marker.setPenWidth(2)
             marker.setColor(Qt.blue)
-            marker.setCenter(node_f.geometry().vertexAt(node[2]))
+            marker.setCenter(node_f.geometry().vertexAt(node.vertex_id))
             self.selected_nodes_markers.append(marker)
         self.selected_nodes = list_nodes
