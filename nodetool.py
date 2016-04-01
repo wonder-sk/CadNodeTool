@@ -299,12 +299,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         topo_edits = [] # tuples fid, geom
         for topo in self.dragging_topo:
-            topo_layer, topo_fid, topo_vertex_id, topo_f = topo
-            topo_geom = QgsGeometry(topo_f.geometry())
-            if not topo_geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), topo_vertex_id):
+            topo_layer = topo.layer
+            topo_geom = QgsGeometry(self.cached_geometry_for_vertex(topo))
+            if not topo_geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), topo.vertex_id):
                 print "[topo] move vertex failed!"
                 continue
-            topo_edits.append( (topo_fid, topo_geom) )
+            topo_edits.append( (topo.fid, topo_geom) )
 
         drag_layer.beginEditCommand( self.tr( "Moved vertex" ) )
         drag_layer.changeGeometry(drag_fid, geom)
