@@ -21,9 +21,12 @@ class Vertex(object):
         self.fid = fid
         self.vertex_id = vertex_id
 
-class LayerCache(object):
-    """ keeps track of features of a layer that are of our interest """
-    pass
+class EditableLayerFilter(QgsPointLocator.MatchFilter):
+    """ a filter to avoid layers that are not editable """
+    def __init__(self):
+        QgsPointLocator.MatchFilter.__init__(self)
+    def acceptMatch(self, match):
+        return match.layer().isEditable()
 
 
 class NodeTool(QgsMapToolAdvancedDigitizing):
@@ -119,25 +122,45 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def cadCanvasMoveEvent(self, e):
 
-        if (not self.dragging and e.mapPointMatch().type() == QgsPointLocator.Vertex) or \
-           (self.dragging and e.isSnapped()):
+        if self.dragging:
+            self.mouse_move_dragging(e)
+        else:
+            self.mouse_move_not_dragging(e)
+
+
+    def mouse_move_dragging(self, e):
+        if e.mapPointMatch().isValid():
             self.snap_marker.setCenter(e.mapPoint())
             self.snap_marker.setVisible(True)
         else:
             self.snap_marker.setVisible(False)
 
+        self.edge_center_marker.setVisible(False)
+
+        for band in self.drag_bands:
+            band.movePoint(1, e.mapPoint())
+
+    def mouse_move_not_dragging(self, e):
+
+        # do not use snap from mouse event, use our own with any editable layer
+        editable_filter = EditableLayerFilter()
+        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
+
+        # possibility to move a node
+        if m.type() == QgsPointLocator.Vertex:
+            self.snap_marker.setCenter(m.point())
+            self.snap_marker.setVisible(True)
+        else:
+            self.snap_marker.setVisible(False)
+
         # possibility to create new node here
-        if not self.dragging and e.mapPointMatch().type() == QgsPointLocator.Edge:
-            p0, p1 = e.mapPointMatch().edgePoints()
+        if m.type() == QgsPointLocator.Edge:
+            p0, p1 = m.edgePoints()
             edge_center = QgsPoint((p0.x() + p1.x())/2, (p0.y() + p1.y())/2)
             self.edge_center_marker.setCenter(edge_center)
             self.edge_center_marker.setVisible(True)
         else:
             self.edge_center_marker.setVisible(False)
-
-        if self.dragging:
-            for band in self.drag_bands:
-                band.movePoint(1, e.mapPoint())
 
     def keyPressEvent(self, e):
 
@@ -180,9 +203,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def start_dragging(self, e):
 
-        # TODO: exclude other layers
-        m = self.canvas().snappingUtils().snapToMap(e.mapPoint())
-        if not m.isValid() or m.layer() != self.canvas().currentLayer():
+        editable_filter = EditableLayerFilter()
+        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
+        if not m.isValid():   # or m.layer() != self.canvas().currentLayer():
             print "wrong snap!"
             return
 
@@ -245,8 +268,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def start_dragging_add_vertex(self, e):
 
-        m = self.canvas().snappingUtils().snapToMap(e.mapPoint())
-        if not m.hasEdge() or m.layer() != self.canvas().currentLayer():
+        editable_filter = EditableLayerFilter()
+        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
+        if not m.hasEdge():
             print "wrong snap!"
             return
 
