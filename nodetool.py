@@ -53,6 +53,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def deactivate(self):
         self.set_highlighted_nodes([])
+        QgsMapToolAdvancedDigitizing.deactivate(self)
 
 
     def can_use_current_layer(self):
