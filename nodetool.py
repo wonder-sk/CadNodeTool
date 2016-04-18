@@ -244,9 +244,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         v0idx, v1idx = geom.adjacentVertices(m.vertexIndex())
         if v0idx != -1:
-            self.add_drag_band(geom.vertexAt(v0idx), m.point())
+            layer_point0 = geom.vertexAt(v0idx)
+            map_point0 = self.toMapCoordinates(m.layer(), layer_point0)
+            self.add_drag_band(map_point0, m.point())
         if v1idx != -1:
-            self.add_drag_band(geom.vertexAt(v1idx), m.point())
+            layer_point1 = geom.vertexAt(v1idx)
+            map_point1 = self.toMapCoordinates(m.layer(), layer_point1)
+            self.add_drag_band(map_point1, m.point())
 
         if not self.topo_editing():
             return  # we are done now
@@ -279,9 +283,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
             v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
             if v0idx != -1:
-                self.add_drag_band(other_g.vertexAt(v0idx), other_m.point())
+                other_point0 = other_g.vertexAt(v0idx)
+                other_map_point0 = self.toMapCoordinates(other_m.layer(), other_point0)
+                self.add_drag_band(other_map_point0, other_m.point())
             if v1idx != -1:
-                self.add_drag_band(other_g.vertexAt(v1idx), other_m.point())
+                other_point1 = other_g.vertexAt(v1idx)
+                other_map_point1 = self.toMapCoordinates(other_m.layer(), other_point1)
+                self.add_drag_band(other_map_point1, other_m.point())
 
 
     def start_dragging_add_vertex(self, e):
@@ -300,10 +308,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         v0 = geom.vertexAt(m.vertexIndex())
         v1 = geom.vertexAt(m.vertexIndex()+1)
 
+        map_v0 = self.toMapCoordinates(m.layer(), v0)
+        map_v1 = self.toMapCoordinates(m.layer(), v1)
+
         if v0.x() != 0 or v0.y() != 0:
-            self.add_drag_band(v0, m.point())
+            self.add_drag_band(map_v0, m.point())
         if v1.x() != 0 or v1.y() != 0:
-            self.add_drag_band(v1, m.point())
+            self.add_drag_band(map_v1, m.point())
 
 
     def cancel_vertex(self):
@@ -313,6 +324,21 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.dragging = False
         self.clear_drag_bands()
 
+    def match_to_layer_point(self, dest_layer, map_point, match):
+
+        layer_point = None
+        # try to use point coordinates in the original CRS if it is the same
+        if match and match.hasVertex() and match.layer() and match.layer().crs() == dest_layer.crs():
+            try:
+                f = match.layer().getFeatures(QgsFeatureRequest(match.featureId())).next()
+                layer_point = f.geometry().vertexAt(match.vertexIndex())
+            except StopIteration:
+                pass
+
+        # fall back to reprojection of the map point to layer point if they are not the same CRS
+        if layer_point is None:
+            layer_point = self.toLayerCoordinates(dest_layer, map_point)
+        return layer_point
 
     def move_vertex(self, e):
 
@@ -329,13 +355,15 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             adding_vertex = True
             drag_vertex_id = drag_vertex_id[0]
 
+        layer_point = self.match_to_layer_point(drag_layer, e.mapPoint(), e.mapPointMatch())
+
         # add/move vertex
         if adding_vertex:
-            if not geom.insertVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
+            if not geom.insertVertex(layer_point.x(), layer_point.y(), drag_vertex_id):
                 print "insert vertex failed!"
                 return
         else:
-            if not geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), drag_vertex_id):
+            if not geom.moveVertex(layer_point.x(), layer_point.y(), drag_vertex_id):
                 print "move vertex failed!"
                 return
 
@@ -343,7 +371,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for topo in self.dragging_topo:
             topo_layer = topo.layer
             topo_geom = QgsGeometry(self.cached_geometry_for_vertex(topo))
-            if not topo_geom.moveVertex(e.mapPoint().x(), e.mapPoint().y(), topo.vertex_id):
+            if not topo_geom.moveVertex(layer_point.x(), layer_point.y(), topo.vertex_id):
                 print "[topo] move vertex failed!"
                 continue
             topo_edits.append( (topo.fid, topo_geom) )
