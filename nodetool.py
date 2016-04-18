@@ -21,13 +21,6 @@ class Vertex(object):
         self.fid = fid
         self.vertex_id = vertex_id
 
-class EditableLayerFilter(QgsPointLocator.MatchFilter):
-    """ a filter to avoid layers that are not editable """
-    def __init__(self):
-        QgsPointLocator.MatchFilter.__init__(self)
-    def acceptMatch(self, match):
-        return match.layer().isEditable()
-
 
 class NodeTool(QgsMapToolAdvancedDigitizing):
     def __init__(self, canvas, cadDock):
@@ -140,11 +133,37 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for band in self.drag_bands:
             band.movePoint(1, e.mapPoint())
 
+    def snap_to_editable_layer(self, e):
+        """ Temporarily override snapping config and snap to vertices and edges
+         of any editable vector layer, to allow selection of node for editing
+         (if snapped to edge, it would offer creation of a new vertex there).
+        """
+
+        map_point = self.toMapCoordinates(e.pos())
+        tol = QgsTolerance.vertexSearchRadius(self.canvas().mapSettings())
+        snap_type = QgsPointLocator.Type(QgsPointLocator.Vertex|QgsPointLocator.Edge)
+
+        snap_layers = []
+        for layer in self.canvas().layers():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
+                continue
+            snap_layers.append(QgsSnappingUtils.LayerConfig(
+                layer, snap_type, tol, QgsTolerance.ProjectUnits))
+
+        snap_util = self.canvas().snappingUtils()
+        old_layers = snap_util.layers()
+        old_mode = snap_util.snapToMapMode()
+        snap_util.setLayers(snap_layers)
+        snap_util.setSnapToMapMode(QgsSnappingUtils.SnapAdvanced)
+        m = snap_util.snapToMap(map_point)
+        snap_util.setLayers(old_layers)
+        snap_util.setSnapToMapMode(old_mode)
+        return m
+
     def mouse_move_not_dragging(self, e):
 
         # do not use snap from mouse event, use our own with any editable layer
-        editable_filter = EditableLayerFilter()
-        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
+        m = self.snap_to_editable_layer(e)
 
         # possibility to move a node
         if m.type() == QgsPointLocator.Vertex:
@@ -203,9 +222,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def start_dragging(self, e):
 
-        editable_filter = EditableLayerFilter()
-        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
-        if not m.isValid():   # or m.layer() != self.canvas().currentLayer():
+        m = self.snap_to_editable_layer(e)
+        if not m.isValid():
             print "wrong snap!"
             return
 
@@ -268,8 +286,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def start_dragging_add_vertex(self, e):
 
-        editable_filter = EditableLayerFilter()
-        m = self.canvas().snappingUtils().snapToMap(e.mapPoint(), editable_filter)
+        m = self.snap_to_editable_layer(e)
         if not m.hasEdge():
             print "wrong snap!"
             return
