@@ -44,6 +44,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.selected_nodes = []  # list of (layer, fid, vid, f)
         self.selected_nodes_markers = []  # list of vertex markers
 
+        self.dragging_rect_start_pos = None    # QPoint if user is dragging a selection rect
+        self.selection_rect = None       # QRect in screen coordinates
+        self.selection_rect_item = None  # QRubberBand to show selection_rect
+
         self.cache = {}
 
 
@@ -106,17 +110,51 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 self.move_vertex(e)
             else:
                 self.start_dragging(e)
+                if not self.dragging:
+                    # the user may have started dragging a rect to select vertices
+                    self.dragging_rect_start_pos = e.pos()
         elif e.button() == Qt.RightButton:
             # cancelling action
             self.cancel_vertex()
 
     def cadCanvasReleaseEvent(self, e):
-        pass
+        # only handling of selection rect being dragged
+        # (everything else is handled in press event)
+        if self.selection_rect is not None:
+            pt0 = self.toMapCoordinates(self.dragging_rect_start_pos)
+            pt1 = self.toMapCoordinates(e.pos())
+            map_rect = QgsRectangle(pt0, pt1)
+            nodes = []
+
+            # for each editable layer, select nodes
+            for layer in self.canvas().layers():
+                if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
+                    continue
+                layer_rect = self.toLayerCoordinates(layer, map_rect)
+                for f in layer.getFeatures(QgsFeatureRequest(layer_rect)):
+                    g = f.geometry()
+                    for i in xrange(g.geometry().nCoordinates()):
+                        pt = g.vertexAt(i)
+                        if layer_rect.contains(pt):
+                            nodes.append( Vertex(layer, f.id(), i) )
+
+            self.set_highlighted_nodes(nodes)
+
+            self.stop_selection_rect()
+
+        self.dragging_rect_start_pos = None
 
     def cadCanvasMoveEvent(self, e):
 
         if self.dragging:
             self.mouse_move_dragging(e)
+        elif self.dragging_rect_start_pos:
+            # the user may be dragging a rect to select vertices
+            if self.selection_rect is None and \
+                    (e.pos() - self.dragging_rect_start_pos).manhattanLength() >= 10:
+                self.start_selection_rect(self.dragging_rect_start_pos)
+            if self.selection_rect is not None:
+                self.update_selection_rect(e.pos())
         else:
             self.mouse_move_not_dragging(e)
 
@@ -220,19 +258,26 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if fid in self.cache[layer]:
             del self.cache[layer][fid]
 
+
     def start_dragging(self, e):
 
         m = self.snap_to_editable_layer(e)
         if not m.isValid():
             print "wrong snap!"
-            return
+            return False
 
+        # activate advanced digitizing dock
         self.setMode(self.CaptureLine)
 
         # adding a new vertex instead of moving a vertex
         if m.hasEdge():
-            self.start_dragging_add_vertex(e)
-            return
+            self.start_dragging_add_vertex(m)
+        else:   # vertex
+            self.start_dragging_move_vertex(e.mapPoint(), m)
+        return True
+
+
+    def start_dragging_move_vertex(self, map_point, m):
 
         assert m.hasVertex()
 
@@ -272,7 +317,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         # support for topo editing - find extra features
         myfilter = MyFilter(0)
         loc = self.canvas().snappingUtils().locatorForLayer(m.layer())
-        loc.nearestVertex(e.mapPoint(), 0, myfilter)
+        loc.nearestVertex(map_point, 0, myfilter)
         for other_m in myfilter.matches:
             if other_m == m: continue
 
@@ -292,12 +337,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 self.add_drag_band(other_map_point1, other_m.point())
 
 
-    def start_dragging_add_vertex(self, e):
+    def start_dragging_add_vertex(self, m):
 
-        m = self.snap_to_editable_layer(e)
-        if not m.hasEdge():
-            print "wrong snap!"
-            return
+        assert m.hasEdge()
 
         self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1,))
         self.dragging_topo = []
@@ -319,6 +361,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def cancel_vertex(self):
 
+        # deactivate advanced digitizing
         self.setMode(self.CaptureNone)
 
         self.dragging = False
@@ -342,6 +385,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def move_vertex(self, e):
 
+        # deactivate advanced digitizing
         self.setMode(self.CaptureNone)
 
         drag_layer = self.dragging.layer
@@ -432,3 +476,26 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             marker.setCenter(geom.vertexAt(node.vertex_id))
             self.selected_nodes_markers.append(marker)
         self.selected_nodes = list_nodes
+
+
+    def start_selection_rect(self, point0):
+        """Initialize rectangle that is being dragged to select nodes.
+        Argument point0 is in screen coordinates."""
+        assert self.selection_rect is None
+        self.selection_rect = QRect()
+        self.selection_rect.setTopLeft(point0)
+        self.selection_rect_item = QRubberBand(QRubberBand.Rectangle, self.canvas())
+
+    def update_selection_rect(self, point1):
+        """Update bottom-right corner of the existing selection rectangle.
+        Argument point1 is in screen coordinates."""
+        assert self.selection_rect is not None
+        self.selection_rect.setBottomRight(point1)
+        self.selection_rect_item.setGeometry(self.selection_rect.normalized())
+        self.selection_rect_item.show()
+
+    def stop_selection_rect(self):
+        assert self.selection_rect is not None
+        self.selection_rect_item.deleteLater()
+        self.selection_rect_item = None
+        self.selection_rect = None
