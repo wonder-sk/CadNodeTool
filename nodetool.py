@@ -312,29 +312,31 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 self.matches.append(match)
                 return True
 
-        # TODO: use all relevant layers!
-
         # support for topo editing - find extra features
-        myfilter = MyFilter(0)
-        loc = self.canvas().snappingUtils().locatorForLayer(m.layer())
-        loc.nearestVertex(map_point, 0, myfilter)
-        for other_m in myfilter.matches:
-            if other_m == m: continue
+        for layer in self.canvas().layers():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
+                continue
 
-            other_g = self.cached_geometry(other_m.layer(), other_m.featureId())
+            myfilter = MyFilter(0)
+            loc = self.canvas().snappingUtils().locatorForLayer(layer)
+            loc.nearestVertex(map_point, 0, myfilter)
+            for other_m in myfilter.matches:
+                if other_m == m: continue
 
-            # start dragging of snapped point of current layer
-            self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
+                other_g = self.cached_geometry(other_m.layer(), other_m.featureId())
 
-            v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
-            if v0idx != -1:
-                other_point0 = other_g.vertexAt(v0idx)
-                other_map_point0 = self.toMapCoordinates(other_m.layer(), other_point0)
-                self.add_drag_band(other_map_point0, other_m.point())
-            if v1idx != -1:
-                other_point1 = other_g.vertexAt(v1idx)
-                other_map_point1 = self.toMapCoordinates(other_m.layer(), other_point1)
-                self.add_drag_band(other_map_point1, other_m.point())
+                # start dragging of snapped point of current layer
+                self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
+
+                v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
+                if v0idx != -1:
+                    other_point0 = other_g.vertexAt(v0idx)
+                    other_map_point0 = self.toMapCoordinates(other_m.layer(), other_point0)
+                    self.add_drag_band(other_map_point0, other_m.point())
+                if v1idx != -1:
+                    other_point1 = other_g.vertexAt(v1idx)
+                    other_map_point1 = self.toMapCoordinates(other_m.layer(), other_point1)
+                    self.add_drag_band(other_map_point1, other_m.point())
 
 
     def start_dragging_add_vertex(self, m):
@@ -411,21 +413,34 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 print "move vertex failed!"
                 return
 
-        topo_edits = [] # tuples fid, geom
+        edits = { drag_layer: { drag_fid: geom } }  # dict { layer : { fid : geom } }
+
+        # add moved vertices from other layers
         for topo in self.dragging_topo:
-            topo_layer = topo.layer
-            topo_geom = QgsGeometry(self.cached_geometry_for_vertex(topo))
-            if not topo_geom.moveVertex(layer_point.x(), layer_point.y(), topo.vertex_id):
+            if topo.layer not in edits:
+                edits[topo.layer] = {}
+            if topo.fid in edits:
+                topo_geom = QgsGeometry(edits[topo.layer][topo.fid])
+            else:
+                topo_geom = QgsGeometry(self.cached_geometry_for_vertex(topo))
+
+            if topo.layer.crs() == drag_layer.crs():
+                point = layer_point
+            else:
+                point = self.toLayerCoordinates(topo.layer, e.mapPoint())
+
+            if not topo_geom.moveVertex(point.x(), point.y(), topo.vertex_id):
                 print "[topo] move vertex failed!"
                 continue
-            topo_edits.append( (topo.fid, topo_geom) )
+            edits[topo.layer][topo.fid] = topo_geom
 
-        drag_layer.beginEditCommand( self.tr( "Moved vertex" ) )
-        drag_layer.changeGeometry(drag_fid, geom)
-        for fid, g in topo_edits:
-            drag_layer.changeGeometry(fid, g)   # TODO: if other layer
-        drag_layer.endEditCommand()
-        drag_layer.triggerRepaint()
+        # do the changes to layers
+        for layer, features_dict in edits.iteritems():
+            layer.beginEditCommand( self.tr( "Moved vertex" ) )
+            for fid, geometry in features_dict.iteritems():
+                layer.changeGeometry(fid, geometry)
+            layer.endEditCommand()
+            layer.triggerRepaint()
 
 
     def delete_vertex(self):
