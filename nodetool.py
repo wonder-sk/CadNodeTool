@@ -433,32 +433,53 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if len(self.selected_nodes) != 0:
             to_delete = self.selected_nodes
         else:
-            to_delete = [self.dragging]
+            to_delete = [self.dragging] + self.dragging_topo
             self.cancel_vertex()
 
         self.set_highlighted_nodes([])   # reset selection
 
+        # switch from a plain list to dictionary { layer: { fid: [vertexNr1, vertexNr2, ...] } }
+        to_delete_grouped = {}
         for vertex in to_delete:
+            if vertex.layer not in to_delete_grouped:
+                to_delete_grouped[vertex.layer] = {}
+            if vertex.fid not in to_delete_grouped[vertex.layer]:
+                to_delete_grouped[vertex.layer][vertex.fid] = []
+            to_delete_grouped[vertex.layer][vertex.fid].append(vertex.vertex_id)
 
+        # main for cycle to delete all selected vertices
+        for layer, features_dict in to_delete_grouped.iteritems():
+
+            layer.beginEditCommand( self.tr( "Deleted vertex" ) )
+            success = True
+
+            for fid, vertex_ids in features_dict.iteritems():
+                res = QgsVectorLayer.Success
+                for vertex_id in sorted(vertex_ids, reverse=True):
+                    if res != QgsVectorLayer.EmptyGeometry:
+                        res = layer.deleteVertexV2(fid, vertex_id)
+                    if res != QgsVectorLayer.EmptyGeometry and res != QgsVectorLayer.Success:
+                        print "failed to delete vertex!", layer.name(), fid, vertex_id, vertex_ids
+                        success = False
+
+            if success:
+                layer.endEditCommand()
+                layer.triggerRepaint()
+            else:
+                layer.destroyEditCommand()
+
+        # pre-select next node for deletion if we are deleting just one node
+        if len(to_delete) == 1:
+            vertex = to_delete[0]
             geom = QgsGeometry(self.cached_geometry_for_vertex(vertex))
-            vertex_id = vertex.vertex_id
-            if not geom.deleteVertex(vertex_id):
-                print "delete vertex failed!"
-                return
-            vertex.layer.beginEditCommand( self.tr( "Deleted vertex" ) )
-            vertex.layer.changeGeometry(vertex.fid, geom)
-            vertex.layer.endEditCommand()
-            vertex.layer.triggerRepaint()
 
-            if len(to_delete) == 1:
-                # pre-select next node for deletion if we are deleting just one node
+            # if next vertex is not available, use the previous one
+            if geom.vertexAt(vertex.vertex_id) == QgsPoint():
+                vertex.vertex_id -= 1
 
-                # if next vertex is not available, use the previous one
-                if geom.vertexAt(vertex_id) == QgsPoint():
-                    vertex_id -= 1
+            if geom.vertexAt(vertex.vertex_id) != QgsPoint():
+                self.set_highlighted_nodes([Vertex(vertex.layer, vertex.fid, vertex.vertex_id)])
 
-                if geom.vertexAt(vertex_id) != QgsPoint():
-                    self.set_highlighted_nodes([Vertex(vertex.layer, vertex.fid, vertex_id)])
 
 
     def set_highlighted_nodes(self, list_nodes):
