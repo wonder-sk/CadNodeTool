@@ -227,6 +227,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if e.key() == Qt.Key_Delete:
             e.ignore()  # Override default shortcut management
             self.delete_vertex()
+        elif e.key() == Qt.Key_Comma:
+            self.highlight_adjacent_vertex(-1)
+        elif e.key() == Qt.Key_Period:
+            self.highlight_adjacent_vertex(+1)
 
     # ------------
 
@@ -512,6 +516,19 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             marker.setCenter(geom.vertexAt(node.vertex_id))
             self.selected_nodes_markers.append(marker)
         self.selected_nodes = list_nodes
+
+    def highlight_adjacent_vertex(self, offset):
+        """Allow moving back and forth selected vertex within a feature"""
+        if len(self.selected_nodes) == 0:
+            return
+
+        node = self.selected_nodes[0]  # simply use the first one
+
+        geom = self.cached_geometry_for_vertex(node)
+        pt = geom.vertexAt(node.vertex_id+offset)
+        if pt != QgsPoint():
+            node = Vertex(node.layer, node.fid, node.vertex_id+offset)
+        self.set_highlighted_nodes([node])
 
 
     def start_selection_rect(self, point0):
