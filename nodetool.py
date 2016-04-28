@@ -452,8 +452,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if len(self.selected_nodes) != 0:
             to_delete = self.selected_nodes
         else:
+            adding_vertex = isinstance(self.dragging.vertex_id, tuple)
             to_delete = [self.dragging] + self.dragging_topo
             self.cancel_vertex()
+
+            if adding_vertex:
+                return   # just cancel the vertex
 
         self.set_highlighted_nodes([])   # reset selection
 
