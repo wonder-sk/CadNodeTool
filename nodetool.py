@@ -227,6 +227,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if e.key() == Qt.Key_Delete:
             e.ignore()  # Override default shortcut management
             self.delete_vertex()
+        elif e.key() == Qt.Key_Escape:
+            if self.dragging:
+                self.cancel_vertex()
         elif e.key() == Qt.Key_Comma:
             self.highlight_adjacent_vertex(-1)
         elif e.key() == Qt.Key_Period:
