@@ -9,6 +9,8 @@
 # (at your option) any later version.
 #---------------------------------------------------------------------
 
+import math
+
 from PyQt4.QtGui import *
 from PyQt4.QtCore import *
 
@@ -221,6 +223,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         snap_util.setSnapToMapMode(old_mode)
         return m
 
+
     def mouse_move_not_dragging(self, e):
 
         # do not use snap from mouse event, use our own with any editable layer
@@ -235,10 +238,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # possibility to create new node here
         if m.type() == QgsPointLocator.Edge:
-            p0, p1 = m.edgePoints()
-            edge_center = QgsPoint((p0.x() + p1.x())/2, (p0.y() + p1.y())/2)
+            map_point = self.toMapCoordinates(e.pos())
+            edge_center, is_near_center = self._match_edge_center_test(m, map_point)
             self.edge_center_marker.setCenter(edge_center)
+            self.edge_center_marker.setColor(Qt.red if is_near_center else Qt.gray)
             self.edge_center_marker.setVisible(True)
+            self.edge_center_marker.update()
         else:
             self.edge_center_marker.setVisible(False)
 
@@ -301,6 +306,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # adding a new vertex instead of moving a vertex
         if m.hasEdge():
+            # only start dragging if we are near edge center
+            map_point = self.toMapCoordinates(e.pos())
+            _, is_near_center = self._match_edge_center_test(m, map_point)
+            if not is_near_center:
+                return False
+
             self.start_dragging_add_vertex(m)
         else:   # vertex
             self.start_dragging_move_vertex(e.mapPoint(), m)
@@ -588,3 +599,16 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.selection_rect_item.deleteLater()
         self.selection_rect_item = None
         self.selection_rect = None
+
+
+    def _match_edge_center_test(self, m, map_point):
+        """ Using a given edge match and original map point, find out
+         center of the edge and whether we are close enough to the center """
+        p0, p1 = m.edgePoints()
+        edge_center = QgsPoint((p0.x() + p1.x())/2, (p0.y() + p1.y())/2)
+
+        dist_from_edge_center = math.sqrt(map_point.sqrDist(edge_center))
+        tol = QgsTolerance.vertexSearchRadius(self.canvas().mapSettings())
+        is_near_center = dist_from_edge_center < tol
+
+        return edge_center, is_near_center
