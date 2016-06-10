@@ -38,6 +38,14 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.edge_center_marker.setPenWidth(1)
         self.edge_center_marker.setVisible(False)
 
+        # used only for moving standalone points
+        # (there are no adjacent vertices so self.drag_bands is empty in that case)
+        self.drag_point_marker = QgsVertexMarker(canvas)
+        self.drag_point_marker.setIconType(QgsVertexMarker.ICON_X)
+        self.drag_point_marker.setColor(Qt.red)
+        self.drag_point_marker.setPenWidth(3)
+        self.drag_point_marker.setVisible(False)
+
         self.drag_bands = []
         self.dragging = None
         self.dragging_topo = []
@@ -50,6 +58,14 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.cache = {}
 
+    def __del__(self):
+        """ Cleanup canvas items we have created """
+        self.canvas().scene().removeItem(self.snap_marker)
+        self.canvas().scene().removeItem(self.edge_center_marker)
+        self.canvas().scene().removeItem(self.drag_point_marker)
+        self.snap_marker = None
+        self.edge_center_marker = None
+        self.drag_point_marker = None
 
     def deactivate(self):
         self.set_highlighted_nodes([])
@@ -96,6 +112,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for band in self.drag_bands:
             self.canvas().scene().removeItem(band)
         self.drag_bands = []
+
+        # for the case when standalone point geometry is being dragged
+        self.drag_point_marker.setVisible(False)
 
     def cadCanvasPressEvent(self, e):
 
@@ -170,6 +189,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         for band in self.drag_bands:
             band.movePoint(1, e.mapPoint())
+
+        # in case of moving of standalone point geometry
+        if self.drag_point_marker.isVisible():
+            self.drag_point_marker.setCenter(e.mapPoint())
 
     def snap_to_editable_layer(self, e):
         """ Temporarily override snapping config and snap to vertices and edges
@@ -303,6 +326,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             layer_point1 = geom.vertexAt(v1idx)
             map_point1 = self.toMapCoordinates(m.layer(), layer_point1)
             self.add_drag_band(map_point1, m.point())
+
+        if v0idx == -1 and v1idx == -1:
+            # this is a standalone point - we need to use a marker for it
+            # to give some feedback to the user
+            self.drag_point_marker.setCenter(map_point)
+            self.drag_point_marker.setVisible(True)
 
         if not self.topo_editing():
             return  # we are done now
