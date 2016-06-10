@@ -24,6 +24,17 @@ class Vertex(object):
         self.vertex_id = vertex_id
 
 
+def _digitizing_color_width():
+    settings = QSettings()
+    color = QColor(
+      settings.value("/qgis/digitizing/line_color_red", 255, type=int),
+      settings.value("/qgis/digitizing/line_color_green", 0, type=int),
+      settings.value("/qgis/digitizing/line_color_blue", 0, type=int),
+      settings.value("/qgis/digitizing/line_color_alpha", 200, type=int) )
+    width = settings.value("/qgis/digitizing/line_width", 1, type=int)
+    return color, width
+
+
 class NodeTool(QgsMapToolAdvancedDigitizing):
     def __init__(self, canvas, cadDock):
         QgsMapToolAdvancedDigitizing.__init__(self, canvas, cadDock)
@@ -48,6 +59,23 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.drag_point_marker.setPenWidth(3)
         self.drag_point_marker.setVisible(False)
 
+        # rubber band for highlight of features on mouse over
+        settings = QSettings()
+        color, width = _digitizing_color_width()
+        self.feature_band = QgsRubberBand(self.canvas())
+        self.feature_band.setColor(color)
+        self.feature_band.setWidth(5)
+        self.feature_band.setVisible(False)
+        self.feature_band_source = None   # tuple (layer, fid) or None depending on what is being shown
+
+        self.vertex_band = QgsRubberBand(self.canvas())
+        self.vertex_band.setIcon(QgsRubberBand.ICON_CIRCLE)
+        self.vertex_band.setColor(color)
+        self.vertex_band.setIconSize(15)
+        self.vertex_band.reset(QGis.Point)
+        self.vertex_band.addPoint(QgsPoint())
+        self.vertex_band.setVisible(False)
+
         self.drag_bands = []
         self.dragging = None
         self.dragging_topo = []
@@ -65,9 +93,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.canvas().scene().removeItem(self.snap_marker)
         self.canvas().scene().removeItem(self.edge_center_marker)
         self.canvas().scene().removeItem(self.drag_point_marker)
+        self.canvas().scene().removeItem(self.feature_band)
+        self.canvas().scene().removeItem(self.vertex_band)
         self.snap_marker = None
         self.edge_center_marker = None
         self.drag_point_marker = None
+        self.feature_band = None
+        self.vertex_band = None
 
     def deactivate(self):
         self.set_highlighted_nodes([])
@@ -96,13 +128,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
     def add_drag_band(self, v1, v2):
         drag_band = QgsRubberBand(self.canvas())
 
-        settings = QSettings()
-        color = QColor(
-          settings.value("/qgis/digitizing/line_color_red", 255, type=int),
-          settings.value("/qgis/digitizing/line_color_green", 0, type=int),
-          settings.value("/qgis/digitizing/line_color_blue", 0, type=int),
-          settings.value("/qgis/digitizing/line_color_alpha", 200, type=int) )
-        width = settings.value("/qgis/digitizing/line_width", 1, type=int)
+        color, width = _digitizing_color_width()
 
         drag_band.setColor(color)
         drag_band.setWidth(width)
@@ -196,6 +222,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if self.drag_point_marker.isVisible():
             self.drag_point_marker.setCenter(e.mapPoint())
 
+        # make sure the temporary feature rubber band is not visible
+        self.feature_band.setVisible(False)
+        self.feature_band_source = None
+        self.vertex_band.setVisible(False)
+
     def snap_to_editable_layer(self, e):
         """ Temporarily override snapping config and snap to vertices and edges
          of any editable vector layer, to allow selection of node for editing
@@ -231,10 +262,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # possibility to move a node
         if m.type() == QgsPointLocator.Vertex:
-            self.snap_marker.setCenter(m.point())
-            self.snap_marker.setVisible(True)
+            self.vertex_band.movePoint(m.point())
+            self.vertex_band.setVisible(True)
         else:
-            self.snap_marker.setVisible(False)
+            self.vertex_band.setVisible(False)
 
         # possibility to create new node here
         if m.type() == QgsPointLocator.Edge:
@@ -246,6 +277,18 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.edge_center_marker.update()
         else:
             self.edge_center_marker.setVisible(False)
+
+        # highlight feature
+        if m.isValid() and m.layer():
+            if self.feature_band_source == (m.layer(), m.featureId()):
+                return  # skip regeneration of rubber band if not needed
+            geom = self.cached_geometry(m.layer(), m.featureId())
+            self.feature_band.setToGeometry(geom, m.layer())
+            self.feature_band.setVisible(True)
+            self.feature_band_source = (m.layer(), m.featureId())
+        else:
+            self.feature_band.setVisible(False)
+            self.feature_band_source = None
 
     def keyPressEvent(self, e):
 
