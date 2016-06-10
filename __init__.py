@@ -41,6 +41,7 @@ class CadNodeToolPlugin:
 
     def unload(self):
         self.iface.removeToolBarIcon(self.action)
+        self.iface.mapCanvas().unsetMapTool(self.tool)
         del self.action
         del self.tool
 
