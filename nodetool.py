@@ -24,6 +24,16 @@ class Vertex(object):
         self.vertex_id = vertex_id
 
 
+class OneFeatureFilter(QgsPointLocator.MatchFilter):
+    """ a filter to allow just one particular feature """
+    def __init__(self, layer, fid):
+        QgsPointLocator.MatchFilter.__init__(self)
+        self.layer = layer
+        self.fid = fid
+    def acceptMatch(self, match):
+        return match.layer() == self.layer and match.featureId() == self.fid
+
+
 def _digitizing_color_width():
     settings = QSettings()
     color = QColor(
@@ -93,6 +103,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.endpoint_marker.setColor(Qt.red)
         self.endpoint_marker.setPenWidth(1)
         self.endpoint_marker.setVisible(False)
+
+        self.last_snap = None   # Match or None - to stick with previously highlighted feature
 
         self.cache = {}
 
@@ -262,8 +274,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         snap_util.setLayers(snap_layers)
         snap_util.setSnapToMapMode(QgsSnappingUtils.SnapAdvanced)
         m = snap_util.snapToMap(map_point)
+
+        # try to stay snapped to previously used feature
+        # so the highlight does not jump around at nodes where features are joined
+        if self.last_snap is not None:
+            filter_last = OneFeatureFilter(self.last_snap.layer(), self.last_snap.featureId())
+            m_last = snap_util.snapToMap(map_point, filter_last)
+            if m_last.isValid() and m_last.distance() <= m.distance():
+                m = m_last
+
         snap_util.setLayers(old_layers)
         snap_util.setSnapToMapMode(old_mode)
+
+        self.last_snap = m
+
         return m
 
     def is_near_endpoint_marker(self, map_point):
