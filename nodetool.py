@@ -86,6 +86,14 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.selection_rect = None       # QRect in screen coordinates
         self.selection_rect_item = None  # QRubberBand to show selection_rect
 
+        self.mouse_at_endpoint = None   # Vertex instance or None
+        self.endpoint_marker_center = None  # QgsPoint or None (can't get center from QgsVertexMarker)
+        self.endpoint_marker = QgsVertexMarker(canvas)
+        self.endpoint_marker.setIconType(QgsVertexMarker.ICON_BOX)
+        self.endpoint_marker.setColor(Qt.red)
+        self.endpoint_marker.setPenWidth(1)
+        self.endpoint_marker.setVisible(False)
+
         self.cache = {}
 
     def __del__(self):
@@ -95,11 +103,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.canvas().scene().removeItem(self.drag_point_marker)
         self.canvas().scene().removeItem(self.feature_band)
         self.canvas().scene().removeItem(self.vertex_band)
+        self.canvas().scene().removeItem(self.endpoint_marker)
         self.snap_marker = None
         self.edge_center_marker = None
         self.drag_point_marker = None
         self.feature_band = None
         self.vertex_band = None
+        self.endpoint_marker = None
 
     def deactivate(self):
         self.set_highlighted_nodes([])
@@ -226,6 +236,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.feature_band.setVisible(False)
         self.feature_band_source = None
         self.vertex_band.setVisible(False)
+        self.endpoint_marker_center = None
+        self.endpoint_marker.setVisible(False)
 
     def snap_to_editable_layer(self, e):
         """ Temporarily override snapping config and snap to vertices and edges
@@ -254,8 +266,61 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         snap_util.setSnapToMapMode(old_mode)
         return m
 
+    def is_near_endpoint_marker(self, map_point):
+        """check whether we are still close to the self.endpoint_marker"""
+        if self.endpoint_marker_center is None:
+            return False
+
+        dist_marker = math.sqrt(self.endpoint_marker_center.sqrDist(map_point))
+        tol = QgsTolerance.vertexSearchRadius(self.canvas().mapSettings())
+
+        geom = self.cached_geometry_for_vertex(self.mouse_at_endpoint)
+        vertex_point = geom.asPolyline()[self.mouse_at_endpoint.vertex_id]  # TODO: multilinestring
+        dist_vertex = math.sqrt(vertex_point.sqrDist(map_point))
+
+        return dist_marker < tol and dist_marker < dist_vertex
+
+    def is_match_at_endpoint(self, match):
+        geom = self.cached_geometry(match.layer(), match.featureId())
+        polyline = geom.asPolyline()
+        # TODO: multilinestring
+        if len(polyline) == 0:
+            return False
+
+        if match.vertexIndex() == 0 or match.vertexIndex() == len(polyline)-1:
+            return True
+
+    def position_for_endpoint_marker(self, match):
+        geom = self.cached_geometry(match.layer(), match.featureId())
+        polyline = geom.asPolyline()
+        # TODO: multilinestring
+        if len(polyline) == 0:
+            return
+
+        if match.vertexIndex() == 0:  # first vertex
+            pts = (polyline[1], polyline[0])
+        else:  # last vertex
+            pts = (polyline[-2], polyline[-1])
+        dx = pts[1].x() - pts[0].x()
+        dy = pts[1].y() - pts[0].y()
+        dist = 15 * self.canvas().mapSettings().mapUnitsPerPixel()
+        angle = math.atan2(dy, dx)  # to the top: angle=0, to the right: angle=90, to the left: angle=-90
+        x = pts[1].x() + math.cos(angle)*dist
+        y = pts[1].y() + math.sin(angle)*dist
+        return QgsPoint(x, y)
 
     def mouse_move_not_dragging(self, e):
+
+        if self.mouse_at_endpoint is not None:
+            # check if we are still at the endpoint, i.e. whether to keep showing
+            # the endpoint indicator - or go back to snapping to editable layers
+            map_point = self.toMapCoordinates(e.pos())
+            if self.is_near_endpoint_marker(map_point):
+                self.endpoint_marker.setColor(Qt.red)
+                self.endpoint_marker.update()
+                # make it clear this would add endpoint, not move the vertex
+                self.vertex_band.setVisible(False)
+                return
 
         # do not use snap from mouse event, use our own with any editable layer
         m = self.snap_to_editable_layer(e)
@@ -264,8 +329,24 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if m.type() == QgsPointLocator.Vertex:
             self.vertex_band.movePoint(m.point())
             self.vertex_band.setVisible(True)
+            # if we are at an endpoint, let's show also the endpoint indicator
+            # so user can possibly add a new vertex at the end
+            if self.is_match_at_endpoint(m):
+                self.mouse_at_endpoint = Vertex(m.layer(), m.featureId(), m.vertexIndex())
+                self.endpoint_marker_center = self.position_for_endpoint_marker(m)
+                self.endpoint_marker.setCenter(self.endpoint_marker_center)
+                self.endpoint_marker.setColor(Qt.gray)
+                self.endpoint_marker.setVisible(True)
+                self.endpoint_marker.update()
+            else:
+                self.mouse_at_endpoint = None
+                self.endpoint_marker_center = None
+                self.endpoint_marker.setVisible(False)
         else:
             self.vertex_band.setVisible(False)
+            self.mouse_at_endpoint = None
+            self.endpoint_marker_center = None
+            self.endpoint_marker.setVisible(False)
 
         # possibility to create new node here
         if m.type() == QgsPointLocator.Edge:
@@ -338,6 +419,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
 
     def start_dragging(self, e):
+
+        map_point = self.toMapCoordinates(e.pos())
+        if self.is_near_endpoint_marker(map_point):
+            self.start_dragging_add_vertex_at_endpoint(map_point)
+            return True
 
         m = self.snap_to_editable_layer(e)
         if not m.isValid():
@@ -450,6 +536,18 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if v1.x() != 0 or v1.y() != 0:
             self.add_drag_band(map_v1, m.point())
 
+    def start_dragging_add_vertex_at_endpoint(self, map_point):
+
+        assert self.mouse_at_endpoint is not None
+
+        self.dragging = Vertex(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid, -self.mouse_at_endpoint.vertex_id-1)
+        self.dragging_topo = []
+
+        geom = self.cached_geometry(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid)
+        v0 = geom.vertexAt(self.mouse_at_endpoint.vertex_id)
+        map_v0 = self.toMapCoordinates(self.mouse_at_endpoint.layer, v0)
+
+        self.add_drag_band(map_v0, map_point)
 
     def cancel_vertex(self):
 
@@ -487,14 +585,29 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.cancel_vertex()
 
         adding_vertex = False
+        appending_vertex = False
         if isinstance(drag_vertex_id, tuple):
             adding_vertex = True
             drag_vertex_id = drag_vertex_id[0]
+        elif drag_vertex_id < 0:
+            adding_vertex = True
+            drag_vertex_id = -drag_vertex_id-1
+            if drag_vertex_id != 0:
+                drag_vertex_id += 1  # adding after last vertex
+                appending_vertex = True
 
         layer_point = self.match_to_layer_point(drag_layer, e.mapPoint(), e.mapPointMatch())
 
         # add/move vertex
-        if adding_vertex:
+        if appending_vertex:
+            # append needs special handling because ordinary insertVertex does not support it
+            vid = QgsVertexId(0, 0, drag_vertex_id, QgsVertexId.SegmentVertex)
+            geom_tmp = geom.geometry().clone()
+            if not geom_tmp.insertVertex(vid, QgsPointV2(layer_point)):
+                print "append vertex failed!"
+                return
+            geom.setGeometry(geom_tmp)
+        elif adding_vertex:
             if not geom.insertVertex(layer_point.x(), layer_point.y(), drag_vertex_id):
                 print "insert vertex failed!"
                 return
