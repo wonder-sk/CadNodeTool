@@ -454,6 +454,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         map_point = self.toMapCoordinates(e.pos())
         if self.is_near_endpoint_marker(map_point):
+            # activate advanced digitizing dock
+            self.setMode(self.CaptureLine)
             self.start_dragging_add_vertex_at_endpoint(map_point)
             return True
 
