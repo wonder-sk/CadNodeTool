@@ -215,6 +215,14 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def cadCanvasMoveEvent(self, e):
 
+        if not isinstance(e, QgsMapMouseEvent):
+            # due to a bug in QGIS, a generated fake QgsMapMouseEvent
+            # by advanced digitizing dock will appear here as an invalid
+            # QMouseEvent. This QGIS pull request fixes that:
+            # https://github.com/qgis/QGIS/pull/3302
+            # For now this is just a workaround - ignoring that event
+            return
+
         if self.dragging:
             self.mouse_move_dragging(e)
         elif self.dragging_rect_start_pos:
