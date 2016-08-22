@@ -45,6 +45,42 @@ def _digitizing_color_width():
     return color, width
 
 
+def _is_circular_vertex(geom, vertex_index):
+    """Find out whether geom (QgsGeometry) has a circular vertex on the given index"""
+    if geom.type() != QGis.Line and geom.type() != QGis.Polygon:
+        return False
+    v_id = QgsVertexId()
+    res = geom.vertexIdFromVertexNr(vertex_index, v_id)
+
+    # we need to get vertex type in this painful way because the above function
+    # does not actually set "type" attribute (surprise surprise)
+    g = geom.geometry()
+    if isinstance(geom, QgsGeometryCollectionV2):
+        g = g.geometryN(v_id.part)
+    if isinstance(geom, QgsCurvePolygonV2):
+        g = g.exteriorRing() if v_id.ring == 0 else g.interiorRing(v_id.ring - 1)
+    assert isinstance(g, QgsCurveV2)
+    p = QgsPointV2()
+    res, v_type = g.pointAt(v_id.vertex, p)
+    if not res:
+        return False
+    return v_type == QgsVertexId.CurveVertex
+
+
+def _geometry_to_polyline(geom):
+    """Return a list of points of the line geometry"""
+    # surprise surprise - QgsAbstractGeometry.points() does not work in python
+    # so let's do it the hard way
+    g = geom.geometry()
+    assert isinstance(g, QgsCurveV2)
+    polyline = []
+    for i in xrange(g.numPoints()):
+        p = QgsPointV2()
+        g.pointAt(i, p)
+        polyline.append(QgsPoint(p.x(), p.y()))
+    return polyline
+
+
 class NodeTool(QgsMapToolAdvancedDigitizing):
     def __init__(self, canvas, cadDock):
         QgsMapToolAdvancedDigitizing.__init__(self, canvas, cadDock)
@@ -307,15 +343,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         tol = QgsTolerance.vertexSearchRadius(self.canvas().mapSettings())
 
         geom = self.cached_geometry_for_vertex(self.mouse_at_endpoint)
-        vertex_point = geom.asPolyline()[self.mouse_at_endpoint.vertex_id]  # TODO: multilinestring
+        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
+        vertex_point_v2 = polyline[self.mouse_at_endpoint.vertex_id]
+        vertex_point = QgsPoint(vertex_point_v2.x(), vertex_point_v2.y())
         dist_vertex = math.sqrt(vertex_point.sqrDist(map_point))
 
         return dist_marker < tol and dist_marker < dist_vertex
 
     def is_match_at_endpoint(self, match):
         geom = self.cached_geometry(match.layer(), match.featureId())
-        polyline = geom.asPolyline()
-        # TODO: multilinestring
+
+        if geom.type() != QGis.Line:
+            return False
+
+        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
         if len(polyline) == 0:
             return False
 
@@ -324,8 +365,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def position_for_endpoint_marker(self, match):
         geom = self.cached_geometry(match.layer(), match.featureId())
-        polyline = geom.asPolyline()
-        # TODO: multilinestring
+        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
         if len(polyline) == 0:
             return
 
@@ -361,6 +401,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if m.type() == QgsPointLocator.Vertex:
             self.vertex_band.movePoint(m.point())
             self.vertex_band.setVisible(True)
+            is_circular_vertex = False
+            if m.layer:
+                geom = self.cached_geometry(m.layer(), m.featureId())
+                is_circular_vertex = _is_circular_vertex(geom, m.vertexIndex())
+
+            self.vertex_band.setIcon(QgsRubberBand.ICON_FULL_BOX if is_circular_vertex else QgsRubberBand.ICON_CIRCLE)
             # if we are at an endpoint, let's show also the endpoint indicator
             # so user can possibly add a new vertex at the end
             if self.is_match_at_endpoint(m):
@@ -396,6 +442,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             if self.feature_band_source == (m.layer(), m.featureId()):
                 return  # skip regeneration of rubber band if not needed
             geom = self.cached_geometry(m.layer(), m.featureId())
+            if QgsWKBTypes.isCurvedType(geom.geometry().wkbType()):
+                geom = QgsGeometry(geom.geometry().segmentize())
             self.feature_band.setToGeometry(geom, m.layer())
             self.feature_band.setVisible(True)
             self.feature_band_source = (m.layer(), m.featureId())
@@ -670,6 +718,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                 print "[topo] move vertex failed!"
                 continue
             edits[topo.layer][topo.fid] = topo_geom
+
+        # TODO: add topological points: when moving vertex - if snapped to something
 
         # do the changes to layers
         for layer, features_dict in edits.iteritems():
