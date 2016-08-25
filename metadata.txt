@@ -5,3 +5,5 @@ version=1.0
 qgisMinimumVersion=2.0
 author=Martin Dobias
 email=wonder.sk@gmail.com
+tracker=https://github.com/wonder-sk/CadNodeTool/issues
+repository=https://github.com/wonder-sk/CadNodeTool
