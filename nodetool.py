@@ -55,9 +55,9 @@ def _is_circular_vertex(geom, vertex_index):
     # we need to get vertex type in this painful way because the above function
     # does not actually set "type" attribute (surprise surprise)
     g = geom.geometry()
-    if isinstance(geom, QgsGeometryCollectionV2):
+    if isinstance(g, QgsGeometryCollectionV2):
         g = g.geometryN(v_id.part)
-    if isinstance(geom, QgsCurvePolygonV2):
+    if isinstance(g, QgsCurvePolygonV2):
         g = g.exteriorRing() if v_id.ring == 0 else g.interiorRing(v_id.ring - 1)
     assert isinstance(g, QgsCurveV2)
     p = QgsPointV2()
