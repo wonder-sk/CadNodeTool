@@ -17,6 +17,9 @@ from PyQt4.QtCore import *
 from qgis.core import *
 from qgis.gui import *
 
+from geomutils import is_endpoint_at_vertex_index, vertex_at_vertex_index, adjacent_vertex_index_to_endpoint
+
+
 class Vertex(object):
     def __init__(self, layer, fid, vertex_id):
         self.layer = layer
@@ -67,18 +70,7 @@ def _is_circular_vertex(geom, vertex_index):
     return v_type == QgsVertexId.CurveVertex
 
 
-def _geometry_to_polyline(geom):
-    """Return a list of points of the line geometry"""
-    # surprise surprise - QgsAbstractGeometry.points() does not work in python
-    # so let's do it the hard way
-    g = geom.geometry()
-    assert isinstance(g, QgsCurveV2)
-    polyline = []
-    for i in xrange(g.numPoints()):
-        p = QgsPointV2()
-        g.pointAt(i, p)
-        polyline.append(QgsPoint(p.x(), p.y()))
-    return polyline
+
 
 
 class NodeTool(QgsMapToolAdvancedDigitizing):
@@ -346,8 +338,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         tol = QgsTolerance.vertexSearchRadius(self.canvas().mapSettings())
 
         geom = self.cached_geometry_for_vertex(self.mouse_at_endpoint)
-        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
-        vertex_point_v2 = polyline[self.mouse_at_endpoint.vertex_id]
+        vertex_point_v2 = vertex_at_vertex_index(geom, self.mouse_at_endpoint.vertex_id)
         vertex_point = QgsPoint(vertex_point_v2.x(), vertex_point_v2.y())
         dist_vertex = math.sqrt(vertex_point.sqrDist(map_point))
 
@@ -359,29 +350,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if geom.type() != QGis.Line:
             return False
 
-        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
-        if len(polyline) == 0:
-            return False
+        return is_endpoint_at_vertex_index(geom, match.vertexIndex())
 
-        if match.vertexIndex() == 0 or match.vertexIndex() == len(polyline)-1:
-            return True
 
     def position_for_endpoint_marker(self, match):
         geom = self.cached_geometry(match.layer(), match.featureId())
-        polyline = _geometry_to_polyline(geom)  # TODO: does not work with multi-type
-        if len(polyline) == 0:
-            return
 
-        if match.vertexIndex() == 0:  # first vertex
-            pts = (polyline[1], polyline[0])
-        else:  # last vertex
-            pts = (polyline[-2], polyline[-1])
-        dx = pts[1].x() - pts[0].x()
-        dy = pts[1].y() - pts[0].y()
+        pt0 = vertex_at_vertex_index(geom, adjacent_vertex_index_to_endpoint(geom, match.vertexIndex()))
+        pt1 = vertex_at_vertex_index(geom, match.vertexIndex())
+        dx = pt1.x() - pt0.x()
+        dy = pt1.y() - pt0.y()
         dist = 15 * self.canvas().mapSettings().mapUnitsPerPixel()
         angle = math.atan2(dy, dx)  # to the top: angle=0, to the right: angle=90, to the left: angle=-90
-        x = pts[1].x() + math.cos(angle)*dist
-        y = pts[1].y() + math.sin(angle)*dist
+        x = pt1.x() + math.cos(angle)*dist
+        y = pt1.y() + math.sin(angle)*dist
         return QgsPoint(x, y)
 
     def mouse_move_not_dragging(self, e):
