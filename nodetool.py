@@ -17,7 +17,7 @@ from PyQt4.QtCore import *
 from qgis.core import *
 from qgis.gui import *
 
-from geomutils import is_endpoint_at_vertex_index, vertex_at_vertex_index, adjacent_vertex_index_to_endpoint
+from geomutils import is_endpoint_at_vertex_index, vertex_at_vertex_index, adjacent_vertex_index_to_endpoint, vertex_index_to_tuple
 
 
 class Vertex(object):
@@ -117,7 +117,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.drag_bands = []
         self.dragging = None
         self.dragging_topo = []
-        self.selected_nodes = []  # list of (layer, fid, vid, f)
+        self.selected_nodes = []  # list of (layer, fid, vid, f)    ## vid when adding is a tuple (vid, adding_at_endpoint)
         self.selected_nodes_markers = []  # list of vertex markers
 
         self.dragging_rect_start_pos = None    # QPoint if user is dragging a selection rect
@@ -586,7 +586,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert m.hasEdge()
 
-        self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1,))
+        self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1, False))
         self.dragging_topo = []
 
         geom = self.cached_geometry(m.layer(), m.featureId())
@@ -607,7 +607,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert self.mouse_at_endpoint is not None
 
-        self.dragging = Vertex(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid, -self.mouse_at_endpoint.vertex_id-1)
+        self.dragging = Vertex(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid, (self.mouse_at_endpoint.vertex_id, True))
         self.dragging_topo = []
 
         geom = self.cached_geometry(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid)
@@ -652,32 +652,25 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.cancel_vertex()
 
         adding_vertex = False
-        appending_vertex = False
+        adding_at_endpoint = False
         if isinstance(drag_vertex_id, tuple):
             adding_vertex = True
-            drag_vertex_id = drag_vertex_id[0]
-        elif drag_vertex_id < 0:
-            adding_vertex = True
-            drag_vertex_id = -drag_vertex_id-1
-            if drag_vertex_id != 0:
-                drag_vertex_id += 1  # adding after last vertex
-                appending_vertex = True
+            drag_vertex_id, adding_at_endpoint = drag_vertex_id
 
         layer_point = self.match_to_layer_point(drag_layer, e.mapPoint(), e.mapPointMatch())
 
         # add/move vertex
-        if appending_vertex:
-            # append needs special handling because ordinary insertVertex does not support it
-            vid = QgsVertexId(0, 0, drag_vertex_id, QgsVertexId.SegmentVertex)
+        if adding_vertex:
+            # ordinary geom.insertVertex does not support appending so we use geometry V2
+            drag_part, drag_vertex = vertex_index_to_tuple(geom, drag_vertex_id)
+            if adding_at_endpoint and drag_vertex != 0:  # appending?
+                drag_vertex += 1
+            vid = QgsVertexId(drag_part, 0, drag_vertex, QgsVertexId.SegmentVertex)
             geom_tmp = geom.geometry().clone()
             if not geom_tmp.insertVertex(vid, QgsPointV2(layer_point)):
                 print "append vertex failed!"
                 return
             geom.setGeometry(geom_tmp)
-        elif adding_vertex:
-            if not geom.insertVertex(layer_point.x(), layer_point.y(), drag_vertex_id):
-                print "insert vertex failed!"
-                return
         else:
             if not geom.moveVertex(layer_point.x(), layer_point.y(), drag_vertex_id):
                 print "move vertex failed!"
