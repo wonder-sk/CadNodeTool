@@ -315,8 +315,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         snap_util = self.canvas().snappingUtils()
         old_layers = snap_util.layers()
         old_mode = snap_util.snapToMapMode()
+        old_intersections = snap_util.snapOnIntersections()
         snap_util.setLayers(snap_layers)
         snap_util.setSnapToMapMode(QgsSnappingUtils.SnapAdvanced)
+        snap_util.setSnapOnIntersections(False)  # only snap to layers
         m = snap_util.snapToMap(map_point)
 
         # try to stay snapped to previously used feature
@@ -329,6 +331,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         snap_util.setLayers(old_layers)
         snap_util.setSnapToMapMode(old_mode)
+        snap_util.setSnapOnIntersections(old_intersections)
 
         self.last_snap = m
 
