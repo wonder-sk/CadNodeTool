@@ -662,10 +662,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         # add/move vertex
         if adding_vertex:
             # ordinary geom.insertVertex does not support appending so we use geometry V2
-            drag_part, drag_vertex = vertex_index_to_tuple(geom, drag_vertex_id)
+            drag_part, drag_ring, drag_vertex = vertex_index_to_tuple(geom, drag_vertex_id)
             if adding_at_endpoint and drag_vertex != 0:  # appending?
                 drag_vertex += 1
-            vid = QgsVertexId(drag_part, 0, drag_vertex, QgsVertexId.SegmentVertex)
+            vid = QgsVertexId(drag_part, drag_ring, drag_vertex, QgsVertexId.SegmentVertex)
             geom_tmp = geom.geometry().clone()
             if not geom_tmp.insertVertex(vid, QgsPointV2(layer_point)):
                 print "append vertex failed!"
