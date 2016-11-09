@@ -153,6 +153,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def deactivate(self):
         self.set_highlighted_nodes([])
+        self.remove_temporary_rubber_bands()
         QgsMapToolAdvancedDigitizing.deactivate(self)
 
 
@@ -281,6 +282,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.drag_point_marker.setCenter(e.mapPoint())
 
         # make sure the temporary feature rubber band is not visible
+        self.remove_temporary_rubber_bands()
+
+    def remove_temporary_rubber_bands(self):
         self.feature_band.setVisible(False)
         self.feature_band_source = None
         self.vertex_band.setVisible(False)
