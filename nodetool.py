@@ -548,15 +548,27 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             return  # we are done now
 
         class MyFilter(QgsPointLocator.MatchFilter):
-            """ a filter just to gather all matches within tolerance """
-            def __init__(self, tolerance=None):
+            """ a filter just to gather all matches at the same place """
+            def __init__(self, nodetool):
                 QgsPointLocator.MatchFilter.__init__(self)
                 self.matches = []
-                self.tolerance = tolerance
+                self.nodetool = nodetool
             def acceptMatch(self, match):
-                if self.tolerance is not None and match.distance() > self.tolerance:
+                if match.distance() > 0:
                     return False
                 self.matches.append(match)
+
+                # there may be multiple points at the same location, but we get only one
+                # result... the locator API needs a new method verticesInRect()
+                match_geom = self.nodetool.cached_geometry(match.layer(), match.featureId())
+                vid = QgsVertexId()
+                pt = QgsPointV2()
+                while match_geom.geometry().nextVertex(vid, pt):
+                    vindex = match_geom.vertexNrFromVertexId(vid)
+                    if pt.x() == match.point().x() and pt.y() == match.point().y() and vindex != match.vertexIndex():
+                        extra_match = QgsPointLocator.Match(match.type(), match.layer(), match.featureId(),
+                                                            0, match.point(), vindex)
+                        self.matches.append(extra_match)
                 return True
 
         # support for topo editing - find extra features
@@ -564,7 +576,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
                 continue
 
-            myfilter = MyFilter(0)
+            myfilter = MyFilter(self)
             loc = self.canvas().snappingUtils().locatorForLayer(layer)
             loc.nearestVertex(map_point, 0, myfilter)
             for other_m in myfilter.matches:
@@ -686,7 +698,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         for topo in self.dragging_topo:
             if topo.layer not in edits:
                 edits[topo.layer] = {}
-            if topo.fid in edits:
+            if topo.fid in edits[topo.layer]:
                 topo_geom = QgsGeometry(edits[topo.layer][topo.fid])
             else:
                 topo_geom = QgsGeometry(self.cached_geometry_for_vertex(topo))
