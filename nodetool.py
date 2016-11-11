@@ -110,8 +110,6 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.vertex_band.setIcon(QgsRubberBand.ICON_CIRCLE)
         self.vertex_band.setColor(color)
         self.vertex_band.setIconSize(15)
-        self.vertex_band.reset(QGis.Point)
-        self.vertex_band.addPoint(QgsPoint())
         self.vertex_band.setVisible(False)
 
         self.drag_bands = []
@@ -205,7 +203,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if e.button() == Qt.LeftButton:
             # accepting action
             if self.dragging:
-                self.move_vertex(e)
+                self.move_vertex(e.mapPoint(), e.mapPointMatch())
             else:
                 self.start_dragging(e)
                 if not self.dragging:
@@ -283,6 +281,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # make sure the temporary feature rubber band is not visible
         self.remove_temporary_rubber_bands()
+
+    def canvasDoubleClickEvent(self, e):
+        """ Start addition of a new vertex on double-click """
+        m = self.snap_to_editable_layer(e)
+        if not m.isValid():
+            return
+        self.start_dragging_add_vertex(m)
 
     def remove_temporary_rubber_bands(self):
         self.feature_band.setVisible(False)
@@ -388,7 +393,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # possibility to move a node
         if m.type() == QgsPointLocator.Vertex:
-            self.vertex_band.movePoint(m.point())
+            self.vertex_band.setToGeometry(QgsGeometry.fromPoint(m.point()), None)
             self.vertex_band.setVisible(True)
             is_circular_vertex = False
             if m.layer:
@@ -656,7 +661,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             layer_point = self.toLayerCoordinates(dest_layer, map_point)
         return layer_point
 
-    def move_vertex(self, e):
+    def move_vertex(self, map_point, map_point_match):
 
         # deactivate advanced digitizing
         self.setMode(self.CaptureNone)
@@ -673,7 +678,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             adding_vertex = True
             drag_vertex_id, adding_at_endpoint = drag_vertex_id
 
-        layer_point = self.match_to_layer_point(drag_layer, e.mapPoint(), e.mapPointMatch())
+        layer_point = self.match_to_layer_point(drag_layer, map_point, map_point_match)
 
         # add/move vertex
         if adding_vertex:
@@ -706,7 +711,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             if topo.layer.crs() == drag_layer.crs():
                 point = layer_point
             else:
-                point = self.toLayerCoordinates(topo.layer, e.mapPoint())
+                point = self.toLayerCoordinates(topo.layer, map_point)
 
             if not topo_geom.moveVertex(point.x(), point.y(), topo.vertex_id):
                 print "[topo] move vertex failed!"
