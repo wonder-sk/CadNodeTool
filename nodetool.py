@@ -839,6 +839,15 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         """ Using a given edge match and original map point, find out
          center of the edge and whether we are close enough to the center """
         p0, p1 = m.edgePoints()
+
+        visible_extent = self.canvas().mapSettings().visibleExtent()
+        if not visible_extent.contains(p0) or not visible_extent.contains(p1):
+            # clip line segment to the extent so the mid-point marker is always visible
+            extent_geom = QgsGeometry.fromRect(visible_extent)
+            line_geom = QgsGeometry.fromPolyline([p0, p1])
+            line_geom = extent_geom.intersection(line_geom)
+            p0, p1 = line_geom.asPolyline()
+
         edge_center = QgsPoint((p0.x() + p1.x())/2, (p0.y() + p1.y())/2)
 
         dist_from_edge_center = math.sqrt(map_point.sqrDist(edge_center))
