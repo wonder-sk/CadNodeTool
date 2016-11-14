@@ -225,7 +225,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             if self.dragging:
                 self.move_vertex(e.mapPoint(), e.mapPointMatch())
             elif self.dragging_edge:
-                self.move_edge(e.mapPoint())
+                map_point = self.toMapCoordinates(e.pos())  # do not use e.mapPoint() as it may be snapped
+                self.move_edge(map_point)
             else:
                 self.start_dragging(e)
                 if not self.dragging and not self.dragging_edge:
@@ -313,7 +314,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         drag_fid = self.dragging_edge.fid
         drag_vertex_0 = self.dragging_edge.edge_vertex_0
         drag_start_point = self.dragging_edge.start_map_point
-        map_point = e.mapPoint()
+        map_point = self.toMapCoordinates(e.pos())  # do not use e.mapPoint() as it may be snapped
 
         diff_x, diff_y = map_point.x() - drag_start_point.x(), map_point.y() - drag_start_point.y()
 
