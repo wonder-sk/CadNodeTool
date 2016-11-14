@@ -309,6 +309,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
     def mouse_move_dragging_edge(self, e):
 
+        self.snap_marker.setVisible(False)
+        self.edge_center_marker.setVisible(False)
+
         band_0_1, bands_to_0, bands_to_1 = self.dragging_edge_bands
         drag_layer = self.dragging_edge.layer
         drag_fid = self.dragging_edge.fid
@@ -341,6 +344,11 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         m = self.snap_to_editable_layer(e)
         if not m.isValid():
             return
+
+        # dragging of edges and double clicking on edges to add vertex are slightly overlapping
+        # so we need to cancel edge moving before we start dragging new vertex
+        self.stop_dragging()
+
         self.start_dragging_add_vertex(m)
 
     def remove_temporary_rubber_bands(self):
