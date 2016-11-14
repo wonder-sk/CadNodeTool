@@ -221,6 +221,15 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.set_highlighted_nodes([])   # reset selection
 
         if e.button() == Qt.LeftButton:
+
+            # Ctrl+Click to highlight nodes without entering editing mode
+            if e.modifiers() & Qt.ControlModifier:
+                m = self.snap_to_editable_layer(e)
+                if m.hasVertex():
+                    node = Vertex(m.layer(), m.featureId(), m.vertexIndex())
+                    self.set_highlighted_nodes([node])
+                return
+
             # accepting action
             if self.dragging:
                 self.move_vertex(e.mapPoint(), e.mapPointMatch())
