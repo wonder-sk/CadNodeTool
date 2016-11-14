@@ -486,7 +486,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
             p0, p1 = m.edgePoints()
             self.edge_band.setToGeometry(QgsGeometry.fromPolyline([p0, p1]), None)
-            self.edge_band.setVisible(True)
+            self.edge_band.setVisible(not is_near_center)
         else:
             self.edge_center_marker.setVisible(False)
             self.edge_band.setVisible(False)
