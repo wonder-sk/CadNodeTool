@@ -26,6 +26,13 @@ class Vertex(object):
         self.fid = fid
         self.vertex_id = vertex_id
 
+class Edge(object):
+    def __init__(self, layer, fid, vertex_id, start_map_point):
+        self.layer = layer
+        self.fid = fid
+        self.edge_vertex_0 = vertex_id   # first vertex (with lower index)
+        self.start_map_point = start_map_point  # map point where edge drag started
+
 
 class OneFeatureFilter(QgsPointLocator.MatchFilter):
     """ a filter to allow just one particular feature """
@@ -112,10 +119,21 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.vertex_band.setIconSize(15)
         self.vertex_band.setVisible(False)
 
-        self.drag_bands = []
-        self.dragging = None
-        self.dragging_topo = []
-        self.selected_nodes = []  # list of (layer, fid, vid, f)    ## vid when adding is a tuple (vid, adding_at_endpoint)
+        self.edge_band = QgsRubberBand(self.canvas())
+        color2 = QColor(color)
+        color2.setAlpha(color2.alpha()/3)
+        self.edge_band.setColor(color2)
+        self.edge_band.setWidth(10)
+        self.edge_band.setVisible(False)
+
+        self.drag_bands = []        # list of QgsRubberBand instances used when dragging
+        self.dragging = None        # instance of Vertex that is being currently moved or nothing
+                                    # (vertex_id when adding is a tuple (vid, adding_at_endpoint))
+        self.dragging_topo = []     # list of Vertex instances of other vertices that are topologically
+                                    # connected to the vertex being currently dragged
+        self.dragging_edge = None   # instance of Edge that is being currently moved or nothing
+        self.dragging_edge_bands = None  # tuple (band_0_1, bands_to_0, bands_to_1) with rubberbands when moving edge
+        self.selected_nodes = []    # list of Vertex instances of nodes that are selected
         self.selected_nodes_markers = []  # list of vertex markers
 
         self.dragging_rect_start_pos = None    # QPoint if user is dragging a selection rect
@@ -141,12 +159,14 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.canvas().scene().removeItem(self.drag_point_marker)
         self.canvas().scene().removeItem(self.feature_band)
         self.canvas().scene().removeItem(self.vertex_band)
+        self.canvas().scene().removeItem(self.edge_band)
         self.canvas().scene().removeItem(self.endpoint_marker)
         self.snap_marker = None
         self.edge_center_marker = None
         self.drag_point_marker = None
         self.feature_band = None
         self.vertex_band = None
+        self.edge_band = None
         self.endpoint_marker = None
 
     def deactivate(self):
@@ -204,14 +224,16 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             # accepting action
             if self.dragging:
                 self.move_vertex(e.mapPoint(), e.mapPointMatch())
+            elif self.dragging_edge:
+                self.move_edge(e.mapPoint())
             else:
                 self.start_dragging(e)
-                if not self.dragging:
+                if not self.dragging and not self.dragging_edge:
                     # the user may have started dragging a rect to select vertices
                     self.dragging_rect_start_pos = e.pos()
         elif e.button() == Qt.RightButton:
             # cancelling action
-            self.cancel_vertex()
+            self.stop_dragging()
 
     def cadCanvasReleaseEvent(self, e):
         # only handling of selection rect being dragged
@@ -252,6 +274,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         if self.dragging:
             self.mouse_move_dragging(e)
+        elif self.dragging_edge:
+            self.mouse_move_dragging_edge(e)
         elif self.dragging_rect_start_pos:
             # the user may be dragging a rect to select vertices
             if self.selection_rect is None and \
@@ -282,6 +306,35 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         # make sure the temporary feature rubber band is not visible
         self.remove_temporary_rubber_bands()
 
+    def mouse_move_dragging_edge(self, e):
+
+        band_0_1, bands_to_0, bands_to_1 = self.dragging_edge_bands
+        drag_layer = self.dragging_edge.layer
+        drag_fid = self.dragging_edge.fid
+        drag_vertex_0 = self.dragging_edge.edge_vertex_0
+        drag_start_point = self.dragging_edge.start_map_point
+        map_point = e.mapPoint()
+
+        diff_x, diff_y = map_point.x() - drag_start_point.x(), map_point.y() - drag_start_point.y()
+
+        geom = QgsGeometry(self.cached_geometry(drag_layer, drag_fid))
+        orig_map_point_0 = self.toMapCoordinates(drag_layer, geom.vertexAt(drag_vertex_0))
+        new_map_point_0 = QgsPoint(orig_map_point_0.x() + diff_x, orig_map_point_0.y() + diff_y)
+        orig_map_point_1 = self.toMapCoordinates(drag_layer, geom.vertexAt(drag_vertex_0+1))
+        new_map_point_1 = QgsPoint(orig_map_point_1.x() + diff_x, orig_map_point_1.y() + diff_y)
+
+        band_0_1.movePoint(0, new_map_point_0)
+        band_0_1.movePoint(1, new_map_point_1)
+
+        for band in bands_to_0:
+            band.movePoint(1, new_map_point_0)
+
+        for band in bands_to_1:
+            band.movePoint(1, new_map_point_1)
+
+        # make sure the temporary feature rubber band is not visible
+        self.remove_temporary_rubber_bands()
+
     def canvasDoubleClickEvent(self, e):
         """ Start addition of a new vertex on double-click """
         m = self.snap_to_editable_layer(e)
@@ -293,6 +346,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         self.feature_band.setVisible(False)
         self.feature_band_source = None
         self.vertex_band.setVisible(False)
+        self.edge_band.setVisible(False)
         self.endpoint_marker_center = None
         self.endpoint_marker.setVisible(False)
 
@@ -420,7 +474,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.endpoint_marker_center = None
             self.endpoint_marker.setVisible(False)
 
-        # possibility to create new node here
+        # possibility to create new node here - or to move the edge
         if m.type() == QgsPointLocator.Edge:
             map_point = self.toMapCoordinates(e.pos())
             edge_center, is_near_center = self._match_edge_center_test(m, map_point)
@@ -428,8 +482,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.edge_center_marker.setColor(Qt.red if is_near_center else Qt.gray)
             self.edge_center_marker.setVisible(True)
             self.edge_center_marker.update()
+
+            p0, p1 = m.edgePoints()
+            self.edge_band.setToGeometry(QgsGeometry.fromPolyline([p0, p1]), None)
+            self.edge_band.setVisible(True)
         else:
             self.edge_center_marker.setVisible(False)
+            self.edge_band.setVisible(False)
 
         # highlight feature
         if m.isValid() and m.layer():
@@ -455,7 +514,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.delete_vertex()
         elif e.key() == Qt.Key_Escape:
             if self.dragging:
-                self.cancel_vertex()
+                self.stop_dragging()
         elif e.key() == Qt.Key_Comma:
             self.highlight_adjacent_vertex(-1)
         elif e.key() == Qt.Key_Period:
@@ -499,12 +558,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             # activate advanced digitizing dock
             self.setMode(self.CaptureLine)
             self.start_dragging_add_vertex_at_endpoint(map_point)
-            return True
+            return
 
         m = self.snap_to_editable_layer(e)
         if not m.isValid():
             print "wrong snap!"
-            return False
+            return
 
         # activate advanced digitizing dock
         self.setMode(self.CaptureLine)
@@ -514,13 +573,12 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             # only start dragging if we are near edge center
             map_point = self.toMapCoordinates(e.pos())
             _, is_near_center = self._match_edge_center_test(m, map_point)
-            if not is_near_center:
-                return False
-
-            self.start_dragging_add_vertex(m)
+            if is_near_center:
+                self.start_dragging_add_vertex(m)
+            else:
+                self.start_dragging_edge(m, map_point)
         else:   # vertex
             self.start_dragging_move_vertex(e.mapPoint(), m)
-        return True
 
 
     def start_dragging_move_vertex(self, map_point, m):
@@ -552,6 +610,32 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not self.topo_editing():
             return  # we are done now
 
+        # support for topo editing - find extra features
+        for layer in self.canvas().layers():
+            if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
+                continue
+
+            for other_m in self.layer_vertices_snapped_to_point(layer, map_point):
+                if other_m == m: continue
+
+                other_g = self.cached_geometry(other_m.layer(), other_m.featureId())
+
+                # start dragging of snapped point of current layer
+                self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
+
+                v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
+                if v0idx != -1:
+                    other_point0 = other_g.vertexAt(v0idx)
+                    other_map_point0 = self.toMapCoordinates(other_m.layer(), other_point0)
+                    self.add_drag_band(other_map_point0, other_m.point())
+                if v1idx != -1:
+                    other_point1 = other_g.vertexAt(v1idx)
+                    other_map_point1 = self.toMapCoordinates(other_m.layer(), other_point1)
+                    self.add_drag_band(other_map_point1, other_m.point())
+
+    def layer_vertices_snapped_to_point(self, layer, map_point):
+        """ Get list of matches of all vertices of a layer exactly snapped to a map point """
+
         class MyFilter(QgsPointLocator.MatchFilter):
             """ a filter just to gather all matches at the same place """
             def __init__(self, nodetool):
@@ -576,32 +660,10 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                         self.matches.append(extra_match)
                 return True
 
-        # support for topo editing - find extra features
-        for layer in self.canvas().layers():
-            if not isinstance(layer, QgsVectorLayer) or not layer.isEditable():
-                continue
-
-            myfilter = MyFilter(self)
-            loc = self.canvas().snappingUtils().locatorForLayer(layer)
-            loc.nearestVertex(map_point, 0, myfilter)
-            for other_m in myfilter.matches:
-                if other_m == m: continue
-
-                other_g = self.cached_geometry(other_m.layer(), other_m.featureId())
-
-                # start dragging of snapped point of current layer
-                self.dragging_topo.append( Vertex(other_m.layer(), other_m.featureId(), other_m.vertexIndex()) )
-
-                v0idx, v1idx = other_g.adjacentVertices(other_m.vertexIndex())
-                if v0idx != -1:
-                    other_point0 = other_g.vertexAt(v0idx)
-                    other_map_point0 = self.toMapCoordinates(other_m.layer(), other_point0)
-                    self.add_drag_band(other_map_point0, other_m.point())
-                if v1idx != -1:
-                    other_point1 = other_g.vertexAt(v1idx)
-                    other_map_point1 = self.toMapCoordinates(other_m.layer(), other_point1)
-                    self.add_drag_band(other_map_point1, other_m.point())
-
+        myfilter = MyFilter(self)
+        loc = self.canvas().snappingUtils().locatorForLayer(layer)
+        loc.nearestVertex(map_point, 0, myfilter)
+        return myfilter.matches
 
     def start_dragging_add_vertex(self, m):
 
@@ -637,12 +699,46 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.add_drag_band(map_v0, map_point)
 
-    def cancel_vertex(self):
+    def start_dragging_edge(self, m, map_point):
+
+        assert m.hasEdge()
+
+        self.dragging_edge = Edge(m.layer(), m.featureId(), m.vertexIndex(), map_point)
+        self.dragging_topo = []
+
+        edge_p0, edge_p1 = m.edgePoints()
+        geom = self.cached_geometry(m.layer(), m.featureId())
+
+        bands_to_p0, bands_to_p1 = [], []
+
+        # add drag bands
+        self.add_drag_band(edge_p0, edge_p1)
+        v0idx, _ = geom.adjacentVertices(m.vertexIndex())
+        _, v1idx = geom.adjacentVertices(m.vertexIndex()+1)
+        if v0idx != -1:
+            layer_point0 = geom.vertexAt(v0idx)
+            map_point0 = self.toMapCoordinates(m.layer(), layer_point0)
+            self.add_drag_band(map_point0, edge_p0)
+            bands_to_p0.append(self.drag_bands[-1])
+        if v1idx != -1:
+            layer_point1 = geom.vertexAt(v1idx)
+            map_point1 = self.toMapCoordinates(m.layer(), layer_point1)
+            self.add_drag_band(map_point1, edge_p1)
+            bands_to_p1.append(self.drag_bands[-1])
+
+        self.dragging_edge_bands = (self.drag_bands[0], bands_to_p0, bands_to_p1)
+
+        # TODO: add topo points
+
+
+    def stop_dragging(self):
 
         # deactivate advanced digitizing
         self.setMode(self.CaptureNone)
 
         self.dragging = False
+        self.dragging_edge = None
+        self.dragging_edge_bands = None
         self.clear_drag_bands()
 
     def match_to_layer_point(self, dest_layer, map_point, match):
@@ -661,6 +757,38 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             layer_point = self.toLayerCoordinates(dest_layer, map_point)
         return layer_point
 
+    def move_edge(self, map_point):
+        """ Finish moving of an edge """
+
+        drag_layer = self.dragging_edge.layer
+        drag_fid = self.dragging_edge.fid
+        drag_vertex_0 = self.dragging_edge.edge_vertex_0
+        drag_start_point = self.dragging_edge.start_map_point
+
+        self.stop_dragging()
+
+        diff_x, diff_y = map_point.x() - drag_start_point.x(), map_point.y() - drag_start_point.y()
+
+        geom = QgsGeometry(self.cached_geometry(drag_layer, drag_fid))
+
+        # TODO: move topo points
+
+        drag_layer.beginEditCommand(self.tr("Moved edge"))
+
+        # move first endpoint
+        orig_map_point_0 = self.toMapCoordinates(drag_layer, geom.vertexAt(drag_vertex_0))
+        new_map_point_0 = QgsPoint(orig_map_point_0.x() + diff_x, orig_map_point_0.y() + diff_y)
+        self.dragging = Vertex(drag_layer, drag_fid, drag_vertex_0)
+        self.move_vertex(new_map_point_0, None)
+
+        # move second endpoint
+        orig_map_point_1 = self.toMapCoordinates(drag_layer, geom.vertexAt(drag_vertex_0+1))
+        new_map_point_1 = QgsPoint(orig_map_point_1.x() + diff_x, orig_map_point_1.y() + diff_y)
+        self.dragging = Vertex(drag_layer, drag_fid, drag_vertex_0+1)
+        self.move_vertex(new_map_point_1, None)
+
+        drag_layer.endEditCommand()
+
     def move_vertex(self, map_point, map_point_match):
 
         # deactivate advanced digitizing
@@ -670,7 +798,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         drag_fid = self.dragging.fid
         drag_vertex_id = self.dragging.vertex_id
         geom = QgsGeometry(self.cached_geometry_for_vertex(self.dragging))
-        self.cancel_vertex()
+        self.stop_dragging()
 
         adding_vertex = False
         adding_at_endpoint = False
@@ -736,7 +864,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         else:
             adding_vertex = isinstance(self.dragging.vertex_id, tuple)
             to_delete = [self.dragging] + self.dragging_topo
-            self.cancel_vertex()
+            self.stop_dragging()
 
             if adding_vertex:
                 return   # just cancel the vertex
