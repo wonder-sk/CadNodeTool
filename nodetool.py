@@ -150,6 +150,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.last_snap = None   # Match or None - to stick with previously highlighted feature
 
+        self.override_cad_points = None  # list of QgsPoint or None
+
         self.cache = {}
 
     def __del__(self):
@@ -271,6 +273,17 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.stop_selection_rect()
 
         self.dragging_rect_start_pos = None
+
+        # there may be a temporary list of points (up to two) that need to be injected
+        # into CAD dock widget in order to make it behave as we need
+        if self.override_cad_points:
+            for pt in self.override_cad_points:
+                me = QgsMapMouseEvent(self.canvas(),
+                                      QMouseEvent(QEvent.MouseButtonRelease,
+                                                  self.toCanvasCoordinates(pt),
+                                                  Qt.LeftButton, Qt.LeftButton, Qt.NoModifier))
+                self.cadDockWidget().canvasReleaseEvent(me, True)
+            self.override_cad_points = None
 
     def cadCanvasMoveEvent(self, e):
 
@@ -573,8 +586,6 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         map_point = self.toMapCoordinates(e.pos())
         if self.is_near_endpoint_marker(map_point):
-            # activate advanced digitizing dock
-            self.setMode(self.CaptureLine)
             self.start_dragging_add_vertex_at_endpoint(map_point)
             return
 
@@ -687,6 +698,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert m.hasEdge()
 
+        # activate advanced digitizing dock
+        self.setMode(self.CaptureLine)
+
         self.dragging = Vertex(m.layer(), m.featureId(), (m.vertexIndex()+1, False))
         self.dragging_topo = []
 
@@ -708,6 +722,9 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         assert self.mouse_at_endpoint is not None
 
+        # activate advanced digitizing dock
+        self.setMode(self.CaptureLine)
+
         self.dragging = Vertex(self.mouse_at_endpoint.layer, self.mouse_at_endpoint.fid, (self.mouse_at_endpoint.vertex_id, True))
         self.dragging_topo = []
 
@@ -717,9 +734,17 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.add_drag_band(map_v0, map_point)
 
+        # setup CAD dock previous points to endpoint and the previous point
+        pt0 = vertex_at_vertex_index(geom, adjacent_vertex_index_to_endpoint(geom, self.mouse_at_endpoint.vertex_id))
+        pt1 = vertex_at_vertex_index(geom, self.mouse_at_endpoint.vertex_id)
+        self.override_cad_points = [pt0, pt1]
+
     def start_dragging_edge(self, m, map_point):
 
         assert m.hasEdge()
+
+        # activate advanced digitizing
+        self.setMode(self.CaptureLine)
 
         self.dragging_edge = Edge(m.layer(), m.featureId(), m.vertexIndex(), map_point)
         self.dragging_topo = []
