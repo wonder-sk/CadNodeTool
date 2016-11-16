@@ -152,6 +152,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.override_cad_points = None  # list of QgsPoint or None
 
+        self.new_vertex_from_double_click = None  # Match or None
+
         self.cache = {}
 
     def __del__(self):
@@ -232,25 +234,26 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
                     self.set_highlighted_nodes([node])
                 return
 
-            # accepting action
-            if self.dragging:
-                self.move_vertex(e.mapPoint(), e.mapPointMatch())
-            elif self.dragging_edge:
-                map_point = self.toMapCoordinates(e.pos())  # do not use e.mapPoint() as it may be snapped
-                self.move_edge(map_point)
-            else:
-                self.start_dragging(e)
-                if not self.dragging and not self.dragging_edge:
-                    # the user may have started dragging a rect to select vertices
-                    self.dragging_rect_start_pos = e.pos()
-        elif e.button() == Qt.RightButton:
-            # cancelling action
-            self.stop_dragging()
+            if not self.dragging and not self.dragging_edge:
+                # the user may have started dragging a rect to select vertices
+                self.dragging_rect_start_pos = e.pos()
 
     def cadCanvasReleaseEvent(self, e):
-        # only handling of selection rect being dragged
-        # (everything else is handled in press event)
-        if self.selection_rect is not None:
+
+        if not self.can_use_current_layer():
+            return
+
+        if self.new_vertex_from_double_click:
+            m = self.new_vertex_from_double_click
+            self.new_vertex_from_double_click = None
+
+            # dragging of edges and double clicking on edges to add vertex are slightly overlapping
+            # so we need to cancel edge moving before we start dragging new vertex
+            self.stop_dragging()
+            self.start_dragging_add_vertex(m)
+
+        elif self.selection_rect is not None:
+            # only handling of selection rect being dragged
             pt0 = self.toMapCoordinates(self.dragging_rect_start_pos)
             pt1 = self.toMapCoordinates(e.pos())
             map_rect = QgsRectangle(pt0, pt1)
@@ -271,6 +274,20 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.set_highlighted_nodes(nodes)
 
             self.stop_selection_rect()
+
+        else:  # selection rect is not being dragged
+            if e.button() == Qt.LeftButton:
+                # accepting action
+                if self.dragging:
+                    self.move_vertex(e.mapPoint(), e.mapPointMatch())
+                elif self.dragging_edge:
+                    map_point = self.toMapCoordinates(e.pos())  # do not use e.mapPoint() as it may be snapped
+                    self.move_edge(map_point)
+                else:
+                    self.start_dragging(e)
+            elif e.button() == Qt.RightButton:
+                # cancelling action
+                self.stop_dragging()
 
         self.dragging_rect_start_pos = None
 
@@ -367,11 +384,7 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if not m.isValid():
             return
 
-        # dragging of edges and double clicking on edges to add vertex are slightly overlapping
-        # so we need to cancel edge moving before we start dragging new vertex
-        self.stop_dragging()
-
-        self.start_dragging_add_vertex(m)
+        self.new_vertex_from_double_click = m
 
     def remove_temporary_rubber_bands(self):
         self.feature_band.setVisible(False)
@@ -636,6 +649,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
             self.drag_point_marker.setCenter(map_point)
             self.drag_point_marker.setVisible(True)
 
+        self.override_cad_points = [m.point(), m.point()]
+
         if not self.topo_editing():
             return  # we are done now
 
@@ -718,6 +733,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
         if v1.x() != 0 or v1.y() != 0:
             self.add_drag_band(map_v1, m.point())
 
+        self.override_cad_points = [m.point(), m.point()]
+
     def start_dragging_add_vertex_at_endpoint(self, map_point):
 
         assert self.mouse_at_endpoint is not None
@@ -771,6 +788,8 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         self.dragging_edge_bands = (self.drag_bands[0], bands_to_p0, bands_to_p1)
 
+        self.override_cad_points = [m.point(), m.point()]
+
         # TODO: add topo points
 
 
@@ -778,6 +797,13 @@ class NodeTool(QgsMapToolAdvancedDigitizing):
 
         # deactivate advanced digitizing
         self.setMode(self.CaptureNone)
+
+        # stop adv digitizing
+        me = QgsMapMouseEvent(self.canvas(),
+                              QMouseEvent(QEvent.MouseButtonRelease,
+                                          QPoint(),
+                                          Qt.RightButton, Qt.RightButton, Qt.NoModifier))
+        self.cadDockWidget().canvasReleaseEvent(me, False)
 
         self.dragging = False
         self.dragging_edge = None
